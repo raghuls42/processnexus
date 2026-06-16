@@ -1,6 +1,16 @@
 import { db } from './config'
-import { collection, addDoc, getDocs, query, where, orderBy, serverTimestamp } from 'firebase/firestore'
-import { doc, updateDoc } from 'firebase/firestore'
+import { 
+  collection, 
+  addDoc, 
+  getDocs, 
+  query, 
+  where, 
+  orderBy, 
+  serverTimestamp, 
+  doc, 
+  updateDoc 
+} from 'firebase/firestore'
+
 // Generate a unique job ID like "SVC-2026-001"
 export const generateJobId = async () => {
   const today = new Date()
@@ -65,6 +75,8 @@ export const getJobsByPhone = async (phone) => {
     return []
   }
 }
+
+// Update service job details
 export const updateJob = async (jobId, updateData) => {
   try {
     const jobRef = doc(db, 'service_jobs', jobId)
@@ -75,6 +87,23 @@ export const updateJob = async (jobId, updateData) => {
     return { success: true }
   } catch (error) {
     console.error('Error updating job:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+// Checkout and record payment for service job
+export const checkoutJob = async (jobId, paymentData) => {
+  try {
+    const jobRef = doc(db, 'service_jobs', jobId)
+    await updateDoc(jobRef, {
+      payment_method: paymentData.payment_method,
+      amount_paid: parseFloat(paymentData.amount_paid),
+      checkout_date: serverTimestamp(),
+      status: 'Completed'
+    })
+    return { success: true }
+  } catch (error) {
+    console.error('Error checking out job:', error)
     return { success: false, error: error.message }
   }
 }
