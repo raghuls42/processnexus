@@ -1,6 +1,6 @@
 import { db } from './config'
 import { collection, addDoc, getDocs, query, where, orderBy, serverTimestamp } from 'firebase/firestore'
-
+import { doc, updateDoc } from 'firebase/firestore'
 // Generate a unique job ID like "SVC-2026-001"
 export const generateJobId = async () => {
   const today = new Date()
@@ -63,5 +63,18 @@ export const getJobsByPhone = async (phone) => {
   } catch (error) {
     console.error('Error fetching jobs:', error)
     return []
+  }
+}
+export const updateJob = async (jobId, updateData) => {
+  try {
+    const jobRef = doc(db, 'service_jobs', jobId)
+    await updateDoc(jobRef, {
+      ...updateData,
+      status: 'Notified'
+    })
+    return { success: true }
+  } catch (error) {
+    console.error('Error updating job:', error)
+    return { success: false, error: error.message }
   }
 }
