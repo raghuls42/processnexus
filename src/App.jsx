@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
-import Navbar from './component/layout/Navbar'
+import Navbar from "./components/layout/Navbar";
 import CheckIn from './pages/CheckIn'
 import Update from './pages/Update'
 import CheckOut from './pages/CheckOut'
