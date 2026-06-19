@@ -9,6 +9,25 @@ export const APPLIANCE_TYPES = [
   "Table Fan",
   "Iron Box",
   "Water Heater",
+  "Air Cooler",
+  "Other"
+]
+
+export const BRAND_NAMES = [
+  "Preethi",
+  "Butterfly",
+  "Prestige",
+  "Bajaj",
+  "Philips",
+  "Havells",
+  "Crompton",
+  "Usha",
+  "Orient",
+  "Pigeon",
+  "Maharaja Whiteline",
+  "Bosch",
+  "Morphy Richards",
+  "Wonderchef",
   "Other"
 ]
 
@@ -29,6 +48,13 @@ export const JOB_STATUS = {
   IN_SERVICE: "In Service",
   NOTIFIED: "Notified",
   READY: "Ready",
+  COMPLETED: "Completed",
+}
+
+export const REPORT_CATEGORIES = {
+  SERVICES_PROVIDED: "Services Provided",
+  YRT_TO_NOTIFY: "YRT to Notify",
+  YRT_TO_RECEIVE: "YRT to Receive",
   COMPLETED: "Completed",
 }
 

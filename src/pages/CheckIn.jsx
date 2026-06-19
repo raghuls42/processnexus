@@ -1,21 +1,7 @@
-// export default function CheckIn() {
-//   return (
-//     <div className="min-h-screen bg-slate-50 p-6">
-//       <div className="max-w-4xl mx-auto">
-//         <h1 className="text-3xl font-bold text-slate-800 mb-2">Check In</h1>
-//         <p className="text-slate-500 mb-8">Register a new appliance for service</p>
-//         <div className="bg-white rounded-lg border border-slate-200 p-8">
-//           <p className="text-slate-400">Check In page</p>
-//         </div>
-//       </div>
-//     </div>
-//   )
-// }
-
-
 import { useState } from 'react'
 import { createJob } from '../firebase/services'
-import { APPLIANCE_TYPES, WARRANTY_STATUS, TECHNICIAN_NAMES, STAFF_NAMES } from '../constants'
+import { APPLIANCE_TYPES, BRAND_NAMES, WARRANTY_STATUS, TECHNICIAN_NAMES, STAFF_NAMES } from '../constants'
+import { ShieldCheck, ShieldOff } from 'lucide-react'
 
 export default function CheckIn() {
   const [formData, setFormData] = useState({
@@ -23,6 +9,7 @@ export default function CheckIn() {
     contact_number: '',
     product_category: '',
     brand: '',
+    custom_brand: '',
     model_name: '',
     warranty_status: 'Out of Warranty',
     assigned_technician: '',
@@ -42,7 +29,8 @@ export default function CheckIn() {
     if (!formData.contact_number.trim()) return 'Contact number required'
     if (formData.contact_number.length < 10) return 'Valid phone number required'
     if (!formData.product_category) return 'Appliance type required'
-    if (!formData.brand.trim()) return 'Brand required'
+    if (!formData.brand) return 'Brand required'
+    if (formData.brand === 'Other' && !formData.custom_brand.trim()) return 'Enter custom brand name'
     if (!formData.assigned_technician) return 'Technician required'
     if (!formData.checkin_staff) return 'Staff name required'
     return null
@@ -60,7 +48,13 @@ export default function CheckIn() {
     setLoading(true)
     setMessage(null)
 
-    const result = await createJob(formData)
+    const jobData = {
+      ...formData,
+      brand: formData.brand === 'Other' ? formData.custom_brand.trim() : formData.brand,
+    }
+    delete jobData.custom_brand
+
+    const result = await createJob(jobData)
     
     if (result.success) {
       setMessage({ 
@@ -72,6 +66,7 @@ export default function CheckIn() {
         contact_number: '',
         product_category: '',
         brand: '',
+        custom_brand: '',
         model_name: '',
         warranty_status: 'Out of Warranty',
         assigned_technician: '',
@@ -83,6 +78,8 @@ export default function CheckIn() {
 
     setLoading(false)
   }
+
+  const isUnderWarranty = formData.warranty_status === 'Under Warranty'
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
@@ -150,20 +147,40 @@ export default function CheckIn() {
             </select>
           </div>
 
-          {/* Brand */}
+          {/* Brand - Dropdown */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
               Brand *
             </label>
-            <input
-              type="text"
+            <select
               name="brand"
               value={formData.brand}
               onChange={handleChange}
-              placeholder="e.g., Preethi"
               className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
+            >
+              <option value="">Select brand...</option>
+              {BRAND_NAMES.map(brand => (
+                <option key={brand} value={brand}>{brand}</option>
+              ))}
+            </select>
           </div>
+
+          {/* Custom Brand - shown when "Other" is selected */}
+          {formData.brand === 'Other' && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Custom Brand Name *
+              </label>
+              <input
+                type="text"
+                name="custom_brand"
+                value={formData.custom_brand}
+                onChange={handleChange}
+                placeholder="Enter brand name..."
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
+              />
+            </div>
+          )}
 
           {/* Model Name */}
           <div>
@@ -185,16 +202,34 @@ export default function CheckIn() {
             <label className="block text-sm font-medium text-slate-700 mb-2">
               Warranty Status *
             </label>
-            <select
-              name="warranty_status"
-              value={formData.warranty_status}
-              onChange={handleChange}
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            >
+            <div className="flex gap-3">
               {WARRANTY_STATUS.map(status => (
-                <option key={status} value={status}>{status}</option>
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setFormData(prev => ({ ...prev, warranty_status: status }))}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg border-2 text-sm font-semibold transition-all ${
+                    formData.warranty_status === status
+                      ? status === 'Under Warranty'
+                        ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm'
+                        : 'border-slate-500 bg-slate-50 text-slate-700 shadow-sm'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  {status === 'Under Warranty' 
+                    ? <ShieldCheck className="w-4 h-4" /> 
+                    : <ShieldOff className="w-4 h-4" />
+                  }
+                  {status}
+                </button>
               ))}
-            </select>
+            </div>
+            {isUnderWarranty && (
+              <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" />
+                This job will be tracked under warranty coverage
+              </p>
+            )}
           </div>
 
           {/* Assigned Technician */}
