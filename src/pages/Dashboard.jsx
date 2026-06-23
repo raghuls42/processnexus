@@ -10,12 +10,24 @@ import {
   AlertTriangle,
   User,
   ArrowUpRight,
-  Cpu
+  Cpu,
+  Brain,
+  Activity,
+  Sliders
 } from 'lucide-react'
+import { ServiceTimePredictor } from '../utils/mlModel'
+import { APPLIANCE_TYPES } from '../constants'
 
 export default function Dashboard() {
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
+  const [predictor, setPredictor] = useState(null)
+  
+  const [sandboxData, setSandboxData] = useState({
+    category: 'Mixer',
+    fault: 'motor sparking and burnt smell',
+    spares: 'motor winding, carbon brush replacement'
+  })
 
   useEffect(() => {
     async function loadData() {
@@ -31,6 +43,21 @@ export default function Dashboard() {
     }
     loadData()
   }, [])
+
+  useEffect(() => {
+    async function initPredictor() {
+      try {
+        const ml = new ServiceTimePredictor()
+        ml.train(jobs)
+        setPredictor(ml)
+      } catch (err) {
+        console.error('Error training predictor on Dashboard load:', err)
+      }
+    }
+    if (jobs.length > 0) {
+      initPredictor()
+    }
+  }, [jobs])
 
   // Aggregation Calculations
   const activeJobs = jobs.filter(j => j.status === 'Received' || j.status === 'In Service')
@@ -48,7 +75,6 @@ export default function Dashboard() {
       }
     })
     
-    // Convert to sorted array
     return Object.entries(workloads)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
@@ -295,6 +321,160 @@ export default function Dashboard() {
 
               </div>
 
+            </div>
+
+            {/* AI Service Time Predictor ML Dashboard */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
+              <div className="flex items-center gap-2.5 pb-4 border-b border-slate-100">
+                <div className="p-2 bg-teal-50 text-teal-600 rounded-lg">
+                  <Brain className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    AI Service Time Predictor
+                    <span className="text-[10px] bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                      Machine Learning
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500">Live regressions trained on historical repairs, helping optimize workflows</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                
+                {/* 1. Model Stats & Category Averages */}
+                <div className="space-y-4 lg:col-span-1 border-r border-slate-100 pr-0 lg:pr-6">
+                  <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Activity className="w-4 h-4 text-teal-600" />
+                    Model Statistics
+                  </h3>
+                  
+                  <div className="space-y-3">
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-150 flex items-center justify-between">
+                      <span className="text-xs text-slate-500 font-medium">Training Status</span>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                        predictor?.isTrained ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                      }`}>
+                        {predictor?.isTrained ? 'Trained ML Mode' : 'Heuristic Mode'}
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-150 flex items-center justify-between">
+                      <span className="text-xs text-slate-500 font-medium">Historical Samples</span>
+                      <span className="text-sm font-bold text-slate-800 font-mono">
+                        {predictor?.trainingSize || 0} job(s)
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-150 flex items-center justify-between">
+                      <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                        Mean Absolute Error
+                        <span className="text-[10px] text-slate-400 cursor-help" title="Average difference between predicted and actual repair times">❓</span>
+                      </span>
+                      <span className="text-sm font-bold text-slate-800 font-mono">
+                        {predictor?.meanAbsoluteError !== null && predictor?.meanAbsoluteError !== undefined
+                          ? `${predictor.meanAbsoluteError.toFixed(1)} hrs`
+                          : '—'
+                        }
+                      </span>
+                    </div>
+                  </div>
+
+                  <hr className="border-slate-100" />
+
+                  {/* Learned Base Hours list */}
+                  <div className="space-y-2">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Estimated Repair Durations
+                    </span>
+                    <div className="max-h-[160px] overflow-y-auto space-y-1.5 pr-1 divide-y divide-slate-100">
+                      {predictor && Object.entries(predictor.baseHours).map(([cat, hours]) => (
+                        <div key={cat} className="flex justify-between items-center text-xs pt-1.5 first:pt-0">
+                          <span className="text-slate-600 font-medium">{cat}</span>
+                          <span className="font-bold text-slate-800">{hours.toFixed(1)} hrs</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Sandbox Form & Live Predictor Output */}
+                <div className="lg:col-span-2 space-y-5">
+                  <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Sliders className="w-4 h-4 text-teal-600" />
+                    Interactive Sandbox Calculator
+                  </h3>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-4">
+                      {/* Appliance Select */}
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase">Appliance Category</label>
+                        <select
+                          value={sandboxData.category}
+                          onChange={(e) => setSandboxData(prev => ({ ...prev, category: e.target.value }))}
+                          className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
+                        >
+                          {APPLIANCE_TYPES.map(type => (
+                            <option key={type} value={type}>{type}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Fault input */}
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase">Reported Fault</label>
+                        <textarea
+                          value={sandboxData.fault}
+                          onChange={(e) => setSandboxData(prev => ({ ...prev, fault: e.target.value }))}
+                          placeholder="e.g. power switch not working, sparks inside motor"
+                          rows="2"
+                          className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all font-sans"
+                        />
+                      </div>
+
+                      {/* Spares input */}
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase">Spare Parts Required</label>
+                        <textarea
+                          value={sandboxData.spares}
+                          onChange={(e) => setSandboxData(prev => ({ ...prev, spares: e.target.value }))}
+                          placeholder="e.g. switch replacement, carbon brush replacement"
+                          rows="2"
+                          className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all font-sans"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Result Output Card */}
+                    <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl p-5 text-white flex flex-col justify-between shadow-sm relative overflow-hidden">
+                      {/* background pattern */}
+                      <div className="absolute right-0 top-0 translate-x-4 -translate-y-4 opacity-[0.05] text-white pointer-events-none">
+                        <Brain className="w-40 h-40" />
+                      </div>
+
+                      <div className="space-y-1 z-10">
+                        <span className="text-[9px] text-teal-400 font-extrabold uppercase tracking-widest flex items-center gap-1">
+                          <Sparkles className="w-3 h-3 animate-pulse" />
+                          AI Output Estimate
+                        </span>
+                        <h4 className="text-2xl font-black tracking-tight text-white mt-2 font-sans">
+                          {predictor ? predictor.predict(sandboxData.category, sandboxData.fault, sandboxData.spares) : 'Calculating...'}
+                        </h4>
+                        <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                          Predicted duration based on statistical keyword correlations and category history.
+                        </p>
+                      </div>
+
+                      <div className="pt-4 border-t border-white/10 mt-4 z-10 flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Regression Math</span>
+                        <span className="text-teal-300 font-semibold">Ready</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
             </div>
           </>
         )}

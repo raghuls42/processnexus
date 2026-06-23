@@ -17,6 +17,7 @@ import {
   Sparkles,
   CreditCard
 } from 'lucide-react'
+import { ServiceTimePredictor } from '../utils/mlModel'
 
 export default function History() {
   const [jobs, setJobs] = useState([])
@@ -24,6 +25,7 @@ export default function History() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [selectedJob, setSelectedJob] = useState(null)
+  const [predictor, setPredictor] = useState(null)
 
   useEffect(() => {
     async function loadJobs() {
@@ -31,6 +33,10 @@ export default function History() {
         setLoading(true)
         const allJobs = await getAllJobs()
         setJobs(allJobs)
+        
+        const ml = new ServiceTimePredictor()
+        ml.train(allJobs)
+        setPredictor(ml)
       } catch (error) {
         console.error('Failed to load history:', error)
       } finally {
@@ -54,7 +60,8 @@ export default function History() {
       (job.product_category || '').toLowerCase().includes(query) ||
       (job.brand || '').toLowerCase().includes(query) ||
       (job.model_name || '').toLowerCase().includes(query) ||
-      (job.assigned_technician || '').toLowerCase().includes(query)
+      (job.assigned_technician || '').toLowerCase().includes(query) ||
+      (job.fault_description || '').toLowerCase().includes(query) // Allow searching by fault description
 
     return matchesStatus && matchesQuery
   })
@@ -78,6 +85,31 @@ export default function History() {
       dateStyle: 'medium',
       timeStyle: 'short'
     })
+  }
+
+  const getActualDuration = (checkin, checkout) => {
+    if (!checkin) return 'N/A'
+    const start = checkin.toDate ? checkin.toDate() : new Date(checkin)
+    const end = checkout ? (checkout.toDate ? checkout.toDate() : new Date(checkout)) : new Date()
+    const diffHours = (end - start) / (1000 * 60 * 60)
+    
+    if (diffHours < 1) {
+      return `${Math.round(diffHours * 60)} minutes`
+    }
+    const wholeHours = Math.floor(diffHours)
+    const mins = Math.round((diffHours - wholeHours) * 60)
+    
+    if (wholeHours >= 24) {
+      const days = Math.floor(wholeHours / 24)
+      const remainingHours = wholeHours % 24
+      let res = `${days} day${days > 1 ? 's' : ''}`
+      if (remainingHours > 0) res += ` ${remainingHours} hr${remainingHours > 1 ? 's' : ''}`
+      return res
+    }
+    
+    let res = `${wholeHours} hr${wholeHours > 1 ? 's' : ''}`
+    if (mins > 0) res += ` ${mins} min${mins > 1 ? 's' : ''}`
+    return res
   }
 
   const getStatusStyle = (status) => {
@@ -135,7 +167,7 @@ export default function History() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
               <input
                 type="text"
-                placeholder="Search by Job ID, customer name, phone, brand, category..."
+                placeholder="Search by Job ID, customer name, phone, brand, category, fault..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
@@ -156,7 +188,7 @@ export default function History() {
                 <button
                   key={tab}
                   onClick={() => setStatusFilter(tab)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium border transition-all ${
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
                     isActive
                       ? 'bg-teal-600 border-teal-600 text-white shadow-sm shadow-teal-100'
                       : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
@@ -251,7 +283,7 @@ export default function History() {
                   </div>
                   <button
                     onClick={() => setSelectedJob(job)}
-                    className="flex items-center gap-1.5 text-xs font-medium text-teal-600 hover:text-teal-700 bg-teal-50 hover:bg-teal-100 px-3 py-2 rounded-lg transition-colors border border-teal-100/50"
+                    className="flex items-center gap-1.5 text-xs font-medium text-teal-600 hover:text-teal-700 bg-teal-50 hover:bg-teal-100 px-3 py-2 rounded-lg transition-colors border border-teal-100/50 cursor-pointer"
                   >
                     <Eye className="w-3.5 h-3.5" />
                     <span>View Audit</span>
@@ -282,7 +314,7 @@ export default function History() {
                 </div>
                 <button 
                   onClick={() => setSelectedJob(null)}
-                  className="p-1 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition-colors"
+                  className="p-1 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition-colors cursor-pointer"
                 >
                   <X className="w-6 h-6" />
                 </button>
@@ -303,6 +335,14 @@ export default function History() {
                   <div>
                     <span className="text-xs text-slate-400 font-semibold uppercase block">Warranty Status</span>
                     <p className="font-semibold text-slate-800 text-base mt-1">{selectedJob.warranty_status}</p>
+                  </div>
+                  
+                  {/* Fault Description block */}
+                  <div className="md:col-span-2 border-t border-slate-200/60 pt-3">
+                    <span className="text-xs text-slate-400 font-semibold uppercase block">Customer Reported Fault</span>
+                    <p className="font-medium text-slate-700 bg-white p-3 rounded-lg border border-slate-200 mt-1 whitespace-pre-wrap leading-relaxed">
+                      {selectedJob.fault_description || 'No fault description provided.'}
+                    </p>
                   </div>
                 </div>
 
@@ -348,6 +388,34 @@ export default function History() {
                   </div>
                 </div>
 
+                {/* Comparative Service Duration Audit */}
+                <div className="border-t border-slate-100 pt-6">
+                  <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-teal-600" /> Service Duration Audit
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div>
+                      <span className="text-xs text-slate-400 block font-semibold flex items-center gap-1 mb-1">
+                        <Sparkles className="w-3.5 h-3.5 text-teal-600" /> AI Predicted Duration
+                      </span>
+                      <span className="text-base font-bold text-slate-800">
+                        {predictor ? predictor.predict(selectedJob.product_category, selectedJob.fault_description, selectedJob.spare_replaced) : 'Calculating...'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-xs text-slate-400 block font-semibold flex items-center gap-1 mb-1">
+                        <Clock className="w-3.5 h-3.5 text-indigo-600" /> Actual Repair Duration
+                      </span>
+                      <span className="text-base font-bold text-slate-800">
+                        {selectedJob.status === 'Completed'
+                          ? getActualDuration(selectedJob.checkin_date, selectedJob.checkout_date)
+                          : `${getActualDuration(selectedJob.checkin_date, null)} (In Progress)`
+                        }
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Financial/Checkout logs if completed */}
                 <div className="border-t border-slate-100 pt-6">
                   <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -384,7 +452,7 @@ export default function History() {
               <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
                 <button
                   onClick={() => setSelectedJob(null)}
-                  className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-medium rounded-lg transition-colors text-sm"
+                  className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-medium rounded-lg transition-colors text-sm cursor-pointer"
                 >
                   Close Audit
                 </button>

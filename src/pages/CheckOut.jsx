@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { getJobsByPhone, checkoutJob } from '../firebase/services'
+import { useState, useEffect } from 'react'
+import { getJobsByPhone, checkoutJob, getAllJobs } from '../firebase/services'
 import { PAYMENT_METHODS } from '../constants'
 import {
   Search,
@@ -13,8 +13,10 @@ import {
   CreditCard,
   Tag,
   AlertTriangle,
-  Sparkles
+  Sparkles,
+  Clock
 } from 'lucide-react'
+import { ServiceTimePredictor } from '../utils/mlModel'
 
 export default function CheckOut() {
   const [searchPhone, setSearchPhone] = useState('')
@@ -23,16 +25,56 @@ export default function CheckOut() {
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState(null)
+  const [predictor, setPredictor] = useState(null)
 
   const [paymentData, setPaymentData] = useState({
     payment_method: '',
     amount_paid: '',
   })
 
+  useEffect(() => {
+    async function initPredictor() {
+      try {
+        const allJobs = await getAllJobs()
+        const ml = new ServiceTimePredictor()
+        ml.train(allJobs)
+        setPredictor(ml)
+      } catch (err) {
+        console.error('Error training predictor on CheckOut load:', err)
+      }
+    }
+    initPredictor()
+  }, [])
+
   const formatDate = (timestamp) => {
     if (!timestamp) return 'N/A'
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp)
     return date.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+  }
+
+  const getActualDuration = (checkin, checkout) => {
+    if (!checkin) return 'N/A'
+    const start = checkin.toDate ? checkin.toDate() : new Date(checkin)
+    const end = checkout ? (checkout.toDate ? checkout.toDate() : new Date(checkout)) : new Date()
+    const diffHours = (end - start) / (1000 * 60 * 60)
+    
+    if (diffHours < 1) {
+      return `${Math.round(diffHours * 60)} minutes`
+    }
+    const wholeHours = Math.floor(diffHours)
+    const mins = Math.round((diffHours - wholeHours) * 60)
+    
+    if (wholeHours >= 24) {
+      const days = Math.floor(wholeHours / 24)
+      const remainingHours = wholeHours % 24
+      let res = `${days} day${days > 1 ? 's' : ''}`
+      if (remainingHours > 0) res += ` ${remainingHours} hr${remainingHours > 1 ? 's' : ''}`
+      return res
+    }
+    
+    let res = `${wholeHours} hr${wholeHours > 1 ? 's' : ''}`
+    if (mins > 0) res += ` ${mins} min${mins > 1 ? 's' : ''}`
+    return res
   }
 
   const handleSearch = async (e) => {
@@ -110,6 +152,15 @@ export default function CheckOut() {
       setJobs([])
       setSearchPhone('')
       setPaymentData({ payment_method: '', amount_paid: '' })
+      // Re-train predictor
+      try {
+        const allJobs = await getAllJobs()
+        const ml = new ServiceTimePredictor()
+        ml.train(allJobs)
+        setPredictor(ml)
+      } catch (err) {
+        console.error(err)
+      }
     } else {
       setMessage({ type: 'error', text: `Checkout failed: ${result.error}` })
     }
@@ -160,7 +211,7 @@ export default function CheckOut() {
             <button
               type="submit"
               disabled={loading}
-              className="bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-colors"
+              className="bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-colors cursor-pointer"
             >
               {loading ? 'Searching…' : 'Search'}
             </button>
@@ -212,7 +263,7 @@ export default function CheckOut() {
           <div className="space-y-6">
 
             {/* Customer & Service Details Card */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden animate-fade-in">
               {/* Card Header */}
               <div className="bg-slate-900 p-5 text-white">
                 <div className="flex items-center justify-between">
@@ -223,7 +274,7 @@ export default function CheckOut() {
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-slate-400">Status</p>
-                    <span className="text-sm font-bold text-indigo-300">{selectedJob.status}</span>
+                    <span className="text-sm font-bold text-teal-300">{selectedJob.status}</span>
                   </div>
                 </div>
               </div>
@@ -248,6 +299,10 @@ export default function CheckOut() {
                       <span className="text-xs">Checked In: {formatDate(selectedJob.checkin_date)}</span>
                     </div>
                     <div className="flex items-center gap-2.5 text-slate-600">
+                      <User className="w-4 h-4 text-slate-400" />
+                      <span>Check-in Staff: <span className="font-medium text-slate-800">{selectedJob.checkin_staff || 'N/A'}</span></span>
+                    </div>
+                    <div className="flex items-center gap-2.5 text-slate-600">
                       <Tag className="w-4 h-4 text-slate-400" />
                       <span>Technician: <span className="font-medium text-slate-800">{selectedJob.assigned_technician}</span></span>
                     </div>
@@ -262,7 +317,7 @@ export default function CheckOut() {
                       <Wrench className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
                       <div>
                         <p className="text-xs text-slate-400 mb-0.5">Spares Replaced</p>
-                        <p className="font-medium text-slate-800 whitespace-pre-wrap">
+                        <p className="font-medium text-slate-800 whitespace-pre-wrap bg-slate-50 border border-slate-100 p-2 rounded-lg">
                           {selectedJob.spare_replaced || 'None'}
                         </p>
                       </div>
@@ -276,6 +331,46 @@ export default function CheckOut() {
                         </p>
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                {/* Fault Description - full width */}
+                <div className="col-span-1 md:col-span-2 pt-4 border-t border-slate-100">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                    Customer Reported Fault
+                  </h4>
+                  <p className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-slate-700 font-medium whitespace-pre-wrap leading-relaxed">
+                    {selectedJob.fault_description || 'No fault description provided.'}
+                  </p>
+                </div>
+
+                {/* AI service time comparison - full width */}
+                <div className="col-span-1 md:col-span-2 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="bg-teal-50/50 border border-teal-100 p-4 rounded-xl space-y-1">
+                    <span className="text-[10px] text-teal-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5 text-teal-500" />
+                      AI Predicted Duration
+                    </span>
+                    <p className="text-base font-bold text-slate-800">
+                      {predictor ? predictor.predict(selectedJob.product_category, selectedJob.fault_description, selectedJob.spare_replaced) : 'Calculating...'}
+                    </p>
+                    <span className="text-[10px] text-slate-400 block">
+                      Estimated duration using ML model
+                    </span>
+                  </div>
+                  
+                  <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl space-y-1">
+                    <span className="text-[10px] text-indigo-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                      Actual Elapsed Duration
+                    </span>
+                    <p className="text-base font-bold text-slate-800">
+                      {getActualDuration(selectedJob.checkin_date, null)}
+                    </p>
+                    <span className="text-[10px] text-slate-400 block">
+                      Time elapsed since check-in
+                    </span>
                   </div>
                 </div>
 
@@ -301,7 +396,7 @@ export default function CheckOut() {
                         key={method}
                         type="button"
                         onClick={() => setPaymentData(prev => ({ ...prev, payment_method: method }))}
-                        className={`py-3 px-4 rounded-lg border-2 text-sm font-semibold transition-all ${
+                        className={`py-3 px-4 rounded-lg border-2 text-sm font-semibold transition-all cursor-pointer ${
                           paymentData.payment_method === method
                             ? 'border-teal-500 bg-teal-50 text-teal-700 shadow-sm'
                             : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
@@ -336,7 +431,7 @@ export default function CheckOut() {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white font-bold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm"
+                  className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white font-bold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm cursor-pointer"
                 >
                   {submitting ? (
                     <>

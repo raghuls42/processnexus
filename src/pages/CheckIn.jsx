@@ -1,7 +1,9 @@
-import { useState } from 'react'
-import { createJob } from '../firebase/services'
+import { useState, useEffect } from 'react'
+import { createJob, getAllJobs } from '../firebase/services'
 import { APPLIANCE_TYPES, BRAND_NAMES, WARRANTY_STATUS, TECHNICIAN_NAMES, STAFF_NAMES } from '../constants'
-import { ShieldCheck, ShieldOff } from 'lucide-react'
+import { ShieldCheck, ShieldOff, Sparkles, AlertTriangle } from 'lucide-react'
+import { ServiceTimePredictor } from '../utils/mlModel'
+
 
 export default function CheckIn() {
   const [formData, setFormData] = useState({
@@ -11,6 +13,7 @@ export default function CheckIn() {
     brand: '',
     custom_brand: '',
     model_name: '',
+    fault_description: '',
     warranty_status: 'Out of Warranty',
     assigned_technician: '',
     checkin_staff: '',
@@ -18,6 +21,21 @@ export default function CheckIn() {
 
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
+  const [predictor, setPredictor] = useState(null)
+
+  useEffect(() => {
+    async function initPredictor() {
+      try {
+        const allJobs = await getAllJobs()
+        const ml = new ServiceTimePredictor()
+        ml.train(allJobs)
+        setPredictor(ml)
+      } catch (err) {
+        console.error('Error training predictor on CheckIn load:', err)
+      }
+    }
+    initPredictor()
+  }, [])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -31,6 +49,7 @@ export default function CheckIn() {
     if (!formData.product_category) return 'Appliance type required'
     if (!formData.brand) return 'Brand required'
     if (formData.brand === 'Other' && !formData.custom_brand.trim()) return 'Enter custom brand name'
+    if (!formData.fault_description.trim()) return 'Fault description required'
     if (!formData.assigned_technician) return 'Technician required'
     if (!formData.checkin_staff) return 'Staff name required'
     return null
@@ -68,10 +87,20 @@ export default function CheckIn() {
         brand: '',
         custom_brand: '',
         model_name: '',
+        fault_description: '',
         warranty_status: 'Out of Warranty',
         assigned_technician: '',
         checkin_staff: '',
       })
+      // Re-train predictor with the new job data
+      try {
+        const allJobs = await getAllJobs()
+        const ml = new ServiceTimePredictor()
+        ml.train(allJobs)
+        setPredictor(ml)
+      } catch (err) {
+        console.error(err)
+      }
     } else {
       setMessage({ type: 'error', text: `Error: ${result.error}` })
     }
@@ -197,6 +226,44 @@ export default function CheckIn() {
             />
           </div>
 
+          {/* Fault Description */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Fault Description *
+            </label>
+            <textarea
+              name="fault_description"
+              value={formData.fault_description}
+              onChange={handleChange}
+              placeholder="Describe the issue (e.g., motor sparking, not heating up, water leakage)..."
+              rows="3"
+              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+
+          {/* Real-time ML Prediction Card */}
+          {formData.product_category && formData.fault_description.trim() && (
+            <div className="bg-teal-50/60 border-2 border-teal-500/20 p-4 rounded-xl flex items-center justify-between shadow-sm animate-fade-in">
+              <div className="space-y-1">
+                <span className="text-[10px] text-teal-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 animate-pulse text-teal-600" />
+                  AI Service Time Prediction
+                </span>
+                <span className="text-xl font-bold text-slate-800 block">
+                  {predictor ? predictor.predict(formData.product_category, formData.fault_description, '') : 'Calculating...'}
+                </span>
+                <span className="text-xs text-slate-400 block">
+                  {predictor?.isTrained 
+                    ? `Based on ML model trained on ${predictor.trainingSize} past job(s)` 
+                    : 'Based on industry standard heuristic estimates'}
+                </span>
+              </div>
+              <div className="bg-teal-600/10 text-teal-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 shrink-0">
+                <span>⚡ Live ML</span>
+              </div>
+            </div>
+          )}
+
           {/* Warranty Status */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -273,7 +340,7 @@ export default function CheckIn() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-gray-400 text-white font-medium py-3 rounded-lg transition-colors"
+              className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-gray-400 text-white font-semibold py-3 rounded-lg transition-colors cursor-pointer"
             >
               {loading ? 'Creating job...' : 'Create Job'}
             </button>
