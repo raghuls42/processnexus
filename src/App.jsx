@@ -5,6 +5,7 @@ import Update from "./pages/Update"
 import CheckOut from "./pages/CheckOut"
 import History from "./pages/History"
 import Dashboard from "./pages/Dashboard"
+import Notifications from "./pages/Notifications"
 
 function Home() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/checkout" element={<CheckOut />} />
         <Route path="/history" element={<History />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/notifications" element={<Notifications />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Router>

@@ -1,11 +1,16 @@
 import { useState, useEffect } from 'react'
-import { getJobsByPhone, checkoutJob, getAllJobs } from '../firebase/services'
+import { 
+  getJobsByPhone, 
+  checkoutJob, 
+  getAllJobs, 
+  getNotificationTemplates, 
+  logNotification 
+} from '../firebase/services'
 import { PAYMENT_METHODS } from '../constants'
 import {
   Search,
   User,
   Phone,
-  Cpu,
   Wrench,
   IndianRupee,
   CheckCircle2,
@@ -14,9 +19,21 @@ import {
   Tag,
   AlertTriangle,
   Sparkles,
-  Clock
+  Clock,
+  X,
+  Mail,
+  ExternalLink
 } from 'lucide-react'
 import { ServiceTimePredictor } from '../utils/mlModel'
+
+// WhatsApp icon SVG
+function WhatsAppIcon({ className, style }) {
+  return (
+    <svg className={className} style={style} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+    </svg>
+  )
+}
 
 export default function CheckOut() {
   const [searchPhone, setSearchPhone] = useState('')
@@ -26,6 +43,18 @@ export default function CheckOut() {
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState(null)
   const [predictor, setPredictor] = useState(null)
+  const [whatsappSent, setWhatsappSent] = useState(false)
+
+  // Receipt / Notification Modal State
+  const [showReceiptModal, setShowReceiptModal] = useState(false)
+  const [receiptData, setReceiptData] = useState({
+    whatsappMessage: '',
+    emailSubject: '',
+    emailBody: '',
+    sendWhatsapp: true,
+    sendEmail: false,
+    customerEmail: ''
+  })
 
   const [paymentData, setPaymentData] = useState({
     payment_method: '',
@@ -57,13 +86,9 @@ export default function CheckOut() {
     const start = checkin.toDate ? checkin.toDate() : new Date(checkin)
     const end = checkout ? (checkout.toDate ? checkout.toDate() : new Date(checkout)) : new Date()
     const diffHours = (end - start) / (1000 * 60 * 60)
-    
-    if (diffHours < 1) {
-      return `${Math.round(diffHours * 60)} minutes`
-    }
+    if (diffHours < 1) return `${Math.round(diffHours * 60)} minutes`
     const wholeHours = Math.floor(diffHours)
     const mins = Math.round((diffHours - wholeHours) * 60)
-    
     if (wholeHours >= 24) {
       const days = Math.floor(wholeHours / 24)
       const remainingHours = wholeHours % 24
@@ -71,7 +96,6 @@ export default function CheckOut() {
       if (remainingHours > 0) res += ` ${remainingHours} hr${remainingHours > 1 ? 's' : ''}`
       return res
     }
-    
     let res = `${wholeHours} hr${wholeHours > 1 ? 's' : ''}`
     if (mins > 0) res += ` ${mins} min${mins > 1 ? 's' : ''}`
     return res
@@ -83,7 +107,6 @@ export default function CheckOut() {
       setMessage({ type: 'error', text: 'Please enter a phone number to search.' })
       return
     }
-
     setLoading(true)
     setMessage(null)
     setJobs([])
@@ -91,18 +114,14 @@ export default function CheckOut() {
     setPaymentData({ payment_method: '', amount_paid: '' })
 
     const results = await getJobsByPhone(searchPhone.trim())
-
-    // Only show jobs that are ready to be checked out (service done)
-    const readyJobs = results.filter(j =>
-      j.status === 'Notified' || j.status === 'Ready'
-    )
+    const readyJobs = results.filter(j => j.status === 'Notified' || j.status === 'Ready')
 
     if (results.length === 0) {
       setMessage({ type: 'error', text: 'No jobs found for this phone number.' })
     } else if (readyJobs.length === 0) {
       setMessage({
         type: 'warn',
-        text: `Found ${results.length} job(s) for this number, but none are ready for checkout yet. Service may still be in progress.`
+        text: `Found ${results.length} job(s) for this number, but none are ready for checkout yet.`
       })
     } else {
       setJobs(readyJobs)
@@ -112,6 +131,7 @@ export default function CheckOut() {
 
   const handleSelectJob = (job) => {
     setSelectedJob(job)
+    setWhatsappSent(false)
     setPaymentData({
       payment_method: '',
       amount_paid: job.service_cost > 0 ? String(job.service_cost) : '',
@@ -127,7 +147,6 @@ export default function CheckOut() {
   const handleCheckout = async (e) => {
     e.preventDefault()
     if (!selectedJob) return
-
     if (!paymentData.payment_method) {
       setMessage({ type: 'error', text: 'Please select a payment method.' })
       return
@@ -140,29 +159,108 @@ export default function CheckOut() {
     setSubmitting(true)
     setMessage(null)
 
-    const result = await checkoutJob(selectedJob.id, paymentData)
-
-    if (result.success) {
-      setMessage({
-        type: 'success',
-        text: `✓ Job ${selectedJob.job_id} checked out successfully! Payment of ₹${paymentData.amount_paid} recorded.`
-      })
-      // Reset everything
-      setSelectedJob(null)
-      setJobs([])
-      setSearchPhone('')
-      setPaymentData({ payment_method: '', amount_paid: '' })
-      // Re-train predictor
-      try {
-        const allJobs = await getAllJobs()
-        const ml = new ServiceTimePredictor()
-        ml.train(allJobs)
-        setPredictor(ml)
-      } catch (err) {
-        console.error(err)
+    try {
+      const templates = await getNotificationTemplates()
+      
+      const interpolate = (templateStr) => {
+        if (!templateStr) return ''
+        return templateStr
+          .replace(/\{customer_name\}/g, selectedJob.customer_name)
+          .replace(/\{job_id\}/g, selectedJob.job_id)
+          .replace(/\{brand\}/g, selectedJob.brand)
+          .replace(/\{model_name\}/g, selectedJob.model_name || 'N/A')
+          .replace(/\{amount_paid\}/g, paymentData.amount_paid)
+          .replace(/\{payment_method\}/g, paymentData.payment_method)
       }
-    } else {
-      setMessage({ type: 'error', text: `Checkout failed: ${result.error}` })
+
+      // Build WhatsApp receipt message
+      const defaultWaMsg = `Hello ${selectedJob.customer_name}! Your ${selectedJob.brand}${selectedJob.model_name ? ' ' + selectedJob.model_name : ''} has been successfully serviced and collected. Job ID: ${selectedJob.job_id}. Amount paid: ₹${paymentData.amount_paid} (${paymentData.payment_method}). Thank you for choosing us! 🙏`
+      const waMsg = templates.closed_sms ? interpolate(templates.closed_sms) : defaultWaMsg
+
+      // Build Email receipt
+      const emailSubject = `Service Completed - Receipt for Job ${selectedJob.job_id}`
+      const emailBody = `Dear ${selectedJob.customer_name},\n\nThank you for collecting your ${selectedJob.brand}${selectedJob.model_name ? ' ' + selectedJob.model_name : ''}.\n\n--- SERVICE RECEIPT ---\nJob ID       : ${selectedJob.job_id}\nAppliance    : ${selectedJob.brand} ${selectedJob.model_name || ''} (${selectedJob.product_category})\nParts Used   : ${selectedJob.spare_replaced || 'None'}\nAmount Paid  : ₹${paymentData.amount_paid}\nPayment Mode : ${paymentData.payment_method}\nService Date : ${formatDate(selectedJob.checkin_date)}\n-----------------------\n\nWe hope your appliance is working perfectly. Please feel free to contact us if you need any further assistance.\n\nThank you!`
+
+      setReceiptData({
+        whatsappMessage: waMsg,
+        emailSubject,
+        emailBody,
+        sendWhatsapp: true,
+        sendEmail: false,
+        customerEmail: selectedJob.customer_email || ''
+      })
+      setWhatsappSent(false)
+      setShowReceiptModal(true)
+    } catch (err) {
+      console.error(err)
+      setMessage({ type: 'error', text: 'Error building receipt. Please try again.' })
+    }
+    setSubmitting(false)
+  }
+
+  // Opens WhatsApp with pre-filled receipt message (FREE)
+  const handleSendWhatsApp = () => {
+    let phone = selectedJob.contact_number.replace(/\D/g, '')
+    if (phone.length === 10) phone = '91' + phone
+    const encoded = encodeURIComponent(receiptData.whatsappMessage)
+    window.open(`https://wa.me/${phone}?text=${encoded}`, '_blank')
+    setWhatsappSent(true)
+
+    // Log to Firestore
+    logNotification(selectedJob.job_id, selectedJob.id, {
+      customer_name: selectedJob.customer_name,
+      contact_number: selectedJob.contact_number,
+      channel: 'WhatsApp',
+      type: 'Closed',
+      message: receiptData.whatsappMessage
+    }).catch(console.error)
+  }
+
+  // Opens email client with pre-filled receipt (FREE via mailto)
+  const handleSendEmail = () => {
+    const email = receiptData.customerEmail.trim()
+    if (!email) return
+    const mailto = `mailto:${email}?subject=${encodeURIComponent(receiptData.emailSubject)}&body=${encodeURIComponent(receiptData.emailBody)}`
+    window.open(mailto, '_blank')
+
+    logNotification(selectedJob.job_id, selectedJob.id, {
+      customer_name: selectedJob.customer_name,
+      contact_number: email,
+      channel: 'Email',
+      type: 'Closed',
+      message: receiptData.emailBody
+    }).catch(console.error)
+  }
+
+  const handleConfirmCheckout = async () => {
+    setSubmitting(true)
+    try {
+      const result = await checkoutJob(selectedJob.id, paymentData)
+      if (result.success) {
+        setMessage({
+          type: 'success',
+          text: `✓ Job ${selectedJob.job_id} closed! Payment of ₹${paymentData.amount_paid} recorded.`
+        })
+        setShowReceiptModal(false)
+        setSelectedJob(null)
+        setJobs([])
+        setSearchPhone('')
+        setPaymentData({ payment_method: '', amount_paid: '' })
+
+        try {
+          const allJobs = await getAllJobs()
+          const ml = new ServiceTimePredictor()
+          ml.train(allJobs)
+          setPredictor(ml)
+        } catch (err) {
+          console.error(err)
+        }
+      } else {
+        setMessage({ type: 'error', text: `Checkout failed: ${result.error}` })
+      }
+    } catch (err) {
+      console.error(err)
+      setMessage({ type: 'error', text: 'Error confirming checkout.' })
     }
     setSubmitting(false)
   }
@@ -174,10 +272,10 @@ export default function CheckOut() {
         {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Check Out</h1>
-          <p className="text-slate-500 mt-1">Search by phone number, review service details, and record payment</p>
+          <p className="text-slate-500 mt-1">Search by phone, review service, record payment, and send receipt to customer</p>
         </div>
 
-        {/* Alert / Feedback Banner */}
+        {/* Alert Banner */}
         {message && (
           <div className={`flex items-start gap-3 p-4 rounded-xl border text-sm font-medium ${
             message.type === 'success'
@@ -262,9 +360,8 @@ export default function CheckOut() {
         {selectedJob && (
           <div className="space-y-6">
 
-            {/* Customer & Service Details Card */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden animate-fade-in">
-              {/* Card Header */}
+            {/* Customer & Service Card */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="bg-slate-900 p-5 text-white">
                 <div className="flex items-center justify-between">
                   <div>
@@ -279,10 +376,8 @@ export default function CheckOut() {
                 </div>
               </div>
 
-              {/* Card Body */}
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
-
-                {/* Left: Customer Info */}
+                {/* Customer Info */}
                 <div className="space-y-4">
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Customer Details</h4>
                   <div className="space-y-3">
@@ -294,13 +389,15 @@ export default function CheckOut() {
                       <Phone className="w-4 h-4 text-slate-400" />
                       <span>{selectedJob.contact_number}</span>
                     </div>
+                    {selectedJob.customer_email && (
+                      <div className="flex items-center gap-2.5 text-indigo-600">
+                        <Mail className="w-4 h-4 text-slate-400" />
+                        <span className="text-sm">{selectedJob.customer_email}</span>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2.5 text-slate-600">
                       <Calendar className="w-4 h-4 text-slate-400" />
                       <span className="text-xs">Checked In: {formatDate(selectedJob.checkin_date)}</span>
-                    </div>
-                    <div className="flex items-center gap-2.5 text-slate-600">
-                      <User className="w-4 h-4 text-slate-400" />
-                      <span>Check-in Staff: <span className="font-medium text-slate-800">{selectedJob.checkin_staff || 'N/A'}</span></span>
                     </div>
                     <div className="flex items-center gap-2.5 text-slate-600">
                       <Tag className="w-4 h-4 text-slate-400" />
@@ -309,7 +406,7 @@ export default function CheckOut() {
                   </div>
                 </div>
 
-                {/* Right: Repair Info */}
+                {/* Repair Info */}
                 <div className="space-y-4">
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Service Summary</h4>
                   <div className="space-y-3">
@@ -326,15 +423,13 @@ export default function CheckOut() {
                       <IndianRupee className="w-4 h-4 text-slate-400" />
                       <div>
                         <p className="text-xs text-slate-400 mb-0.5">Service Cost Quoted</p>
-                        <p className="text-xl font-bold text-teal-600">
-                          ₹{selectedJob.service_cost || 0}
-                        </p>
+                        <p className="text-xl font-bold text-teal-600">₹{selectedJob.service_cost || 0}</p>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Fault Description - full width */}
+                {/* Fault Description */}
                 <div className="col-span-1 md:col-span-2 pt-4 border-t border-slate-100">
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                     <AlertTriangle className="w-4 h-4 text-amber-500" />
@@ -345,9 +440,9 @@ export default function CheckOut() {
                   </p>
                 </div>
 
-                {/* AI service time comparison - full width */}
+                {/* ML vs Actual Duration */}
                 <div className="col-span-1 md:col-span-2 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="bg-teal-50/50 border border-teal-100 p-4 rounded-xl space-y-1">
+                  <div className="bg-teal-50/50 border border-teal-100/50 p-4 rounded-xl space-y-1">
                     <span className="text-[10px] text-teal-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
                       <Sparkles className="w-3.5 h-3.5 text-teal-500" />
                       AI Predicted Duration
@@ -355,12 +450,9 @@ export default function CheckOut() {
                     <p className="text-base font-bold text-slate-800">
                       {predictor ? predictor.predict(selectedJob.product_category, selectedJob.fault_description, selectedJob.spare_replaced) : 'Calculating...'}
                     </p>
-                    <span className="text-[10px] text-slate-400 block">
-                      Estimated duration using ML model
-                    </span>
+                    <span className="text-[10px] text-slate-400 block">Estimated duration using ML model</span>
                   </div>
-                  
-                  <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl space-y-1">
+                  <div className="bg-indigo-50/50 border border-indigo-100/50 p-4 rounded-xl space-y-1">
                     <span className="text-[10px] text-indigo-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5 text-indigo-500" />
                       Actual Elapsed Duration
@@ -368,12 +460,9 @@ export default function CheckOut() {
                     <p className="text-base font-bold text-slate-800">
                       {getActualDuration(selectedJob.checkin_date, null)}
                     </p>
-                    <span className="text-[10px] text-slate-400 block">
-                      Time elapsed since check-in
-                    </span>
+                    <span className="text-[10px] text-slate-400 block">Time elapsed since check-in</span>
                   </div>
                 </div>
-
               </div>
             </div>
 
@@ -384,8 +473,6 @@ export default function CheckOut() {
                 Record Payment & Complete
               </h2>
               <form onSubmit={handleCheckout} className="space-y-5">
-
-                {/* Payment Method */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Payment Method <span className="text-red-500">*</span>
@@ -408,7 +495,6 @@ export default function CheckOut() {
                   </div>
                 </div>
 
-                {/* Amount */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Amount Paid (₹) <span className="text-red-500">*</span>
@@ -427,32 +513,167 @@ export default function CheckOut() {
                   </div>
                 </div>
 
-                {/* Submit Button */}
                 <button
                   type="submit"
                   disabled={submitting}
                   className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white font-bold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm cursor-pointer"
                 >
-                  {submitting ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                      Processing Checkout…
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      Confirm Payment & Close Job
-                    </>
-                  )}
+                  📲 Confirm Payment & Send Receipt to Customer
                 </button>
-
               </form>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ─── RECEIPT + NOTIFICATION MODAL ─── */}
+      {showReceiptModal && selectedJob && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 font-sans">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+            
+            {/* Modal Header */}
+            <div className="p-4 bg-slate-800 text-white flex justify-between items-center shrink-0">
+              <div>
+                <span className="font-bold text-sm block">📬 Send Receipt to Customer</span>
+                <span className="text-[11px] text-white/60">Job {selectedJob.job_id} • FREE — No API needed</span>
+              </div>
+              <button 
+                onClick={() => setShowReceiptModal(false)}
+                className="p-1 rounded-full hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-5 text-sm text-slate-700">
+
+              {/* Customer info bar */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-teal-600 flex items-center justify-center text-white font-bold text-sm shrink-0">
+                  {selectedJob.customer_name?.[0]?.toUpperCase() || 'C'}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-slate-800 text-sm">{selectedJob.customer_name}</div>
+                  <div className="text-xs text-slate-500">{selectedJob.contact_number}{selectedJob.customer_email ? ` • ${selectedJob.customer_email}` : ''}</div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-[10px] text-slate-400">Amount Paid</div>
+                  <div className="font-bold text-teal-600">₹{paymentData.amount_paid}</div>
+                </div>
+              </div>
+
+              {/* ── WhatsApp Receipt ── */}
+              <div className="rounded-xl overflow-hidden border border-green-200">
+                <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: '#075e54' }}>
+                  <WhatsAppIcon className="w-4 h-4 text-white" />
+                  <span className="text-white font-semibold text-xs">WhatsApp Receipt</span>
+                  <span className="ml-auto text-[10px] text-white/50">Free</span>
+                </div>
+                {/* Chat bubble preview */}
+                <div className="p-3" style={{ background: '#ece5dd' }}>
+                  <div className="ml-auto max-w-[92%] rounded-tl-xl rounded-bl-xl rounded-br-xl p-2.5 text-[12px] leading-relaxed whitespace-pre-wrap" style={{ background: '#dcf8c6' }}>
+                    {receiptData.whatsappMessage}
+                  </div>
+                </div>
+                {/* Editable */}
+                <div className="px-3 pt-2 pb-1 bg-white">
+                  <p className="text-[10px] text-slate-400 mb-1">Edit message if needed:</p>
+                  <textarea
+                    value={receiptData.whatsappMessage}
+                    onChange={(e) => setReceiptData(prev => ({ ...prev, whatsappMessage: e.target.value }))}
+                    rows="3"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all font-sans"
+                  />
+                </div>
+                <div className="p-2 bg-white">
+                  <button
+                    type="button"
+                    onClick={handleSendWhatsApp}
+                    className="w-full py-2.5 rounded-lg font-bold text-sm text-white flex items-center justify-center gap-2 transition-all hover:opacity-90 active:scale-95"
+                    style={{ background: '#25d366' }}
+                  >
+                    <WhatsAppIcon className="w-4 h-4 text-white" />
+                    {whatsappSent ? '✓ WhatsApp Opened — Click Send there!' : 'Open WhatsApp & Send Receipt'}
+                    <ExternalLink className="w-3 h-3 opacity-70" />
+                  </button>
+                  {whatsappSent && (
+                    <p className="text-[11px] text-center text-green-600 font-semibold mt-1.5">
+                      ✅ Click "Send" inside WhatsApp to deliver the receipt
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Email Receipt ── */}
+              <div className="rounded-xl overflow-hidden border border-indigo-200">
+                <div className="px-3 py-2.5 flex items-center gap-2 bg-indigo-700">
+                  <Mail className="w-4 h-4 text-white" />
+                  <span className="text-white font-semibold text-xs">Email Receipt</span>
+                  <span className="ml-auto text-[10px] text-white/50">Free via email client</span>
+                </div>
+                <div className="p-3 bg-indigo-50 space-y-2">
+                  <div>
+                    <p className="text-[10px] text-slate-500 mb-1 font-semibold uppercase tracking-wider">Customer Email</p>
+                    <input
+                      type="email"
+                      value={receiptData.customerEmail}
+                      onChange={(e) => setReceiptData(prev => ({ ...prev, customerEmail: e.target.value }))}
+                      placeholder="Enter customer email (if available)"
+                      className="w-full px-3 py-2 border border-indigo-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500 mb-1 font-semibold uppercase tracking-wider">Email Body Preview</p>
+                    <div className="bg-white border border-indigo-100 rounded-lg p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono leading-relaxed max-h-28 overflow-y-auto">
+                      {receiptData.emailBody}
+                    </div>
+                  </div>
+                </div>
+                <div className="p-2 bg-white">
+                  {receiptData.customerEmail.trim() ? (
+                    <button
+                      type="button"
+                      onClick={handleSendEmail}
+                      className="w-full py-2.5 rounded-lg font-bold text-sm text-white bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center gap-2 transition-all active:scale-95"
+                    >
+                      <Mail className="w-4 h-4" />
+                      Open Email Client & Send Receipt
+                      <ExternalLink className="w-3 h-3 opacity-70" />
+                    </button>
+                  ) : (
+                    <div className="text-[11px] text-center text-slate-400 py-1">
+                      Enter email above to enable email receipt
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-between gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowReceiptModal(false)}
+                className="px-4 py-2 border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCheckout}
+                disabled={submitting}
+                className="px-5 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {submitting ? 'Closing job...' : 'Confirm & Close Job'}
+              </button>
             </div>
 
           </div>
-        )}
-
-      </div>
+        </div>
+      )}
     </div>
   )
 }

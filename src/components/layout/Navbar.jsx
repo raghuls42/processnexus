@@ -11,6 +11,7 @@ export default function Navbar() {
       <Link to="/checkout" className={location.pathname === '/checkout' ? 'bg-white text-teal-600 px-3 py-1 rounded' : 'hover:bg-teal-700 px-3 py-1'}>Check Out</Link>
       <Link to="/history" className={location.pathname === '/history' ? 'bg-white text-teal-600 px-3 py-1 rounded' : 'hover:bg-teal-700 px-3 py-1'}>History</Link>
       <Link to="/dashboard" className={location.pathname === '/dashboard' ? 'bg-white text-teal-600 px-3 py-1 rounded' : 'hover:bg-teal-700 px-3 py-1'}>Dashboard</Link>
+      <Link to="/notifications" className={location.pathname === '/notifications' ? 'bg-white text-teal-600 px-3 py-1 rounded' : 'hover:bg-teal-700 px-3 py-1'}>Notifications</Link>
     </nav>
   )
 }

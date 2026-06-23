@@ -15,7 +15,8 @@ import {
   SlidersHorizontal,
   Wrench,
   Sparkles,
-  CreditCard
+  CreditCard,
+  MessageSquare
 } from 'lucide-react'
 import { ServiceTimePredictor } from '../utils/mlModel'
 
@@ -414,6 +415,42 @@ export default function History() {
                       </span>
                     </div>
                   </div>
+                </div>
+
+                {/* Communications Log Section */}
+                <div className="border-t border-slate-100 pt-6">
+                  <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <MessageSquare className="w-5 h-5 text-teal-600" /> Communications History Log
+                  </h3>
+                  
+                  {!selectedJob.notifications || selectedJob.notifications.length === 0 ? (
+                    <p className="text-slate-400 text-xs italic bg-slate-50 p-4 rounded-xl border border-slate-150 text-center">
+                      No automated alerts or billing receipts have been dispatched for this service order yet.
+                    </p>
+                  ) : (
+                    <div className="space-y-3.5 max-h-[220px] overflow-y-auto pr-1">
+                      {selectedJob.notifications.map((notif, idx) => (
+                        <div key={idx} className="bg-slate-50 border border-slate-200 p-3 rounded-xl space-y-2">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold ${
+                              notif.channel === 'SMS' ? 'bg-blue-50 text-blue-700' : 'bg-indigo-50 text-indigo-700'
+                            }`}>
+                              {notif.channel === 'SMS' ? '💬 SMS' : '📧 Email'} • {notif.type}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-medium">
+                              {new Date(notif.timestamp).toLocaleString('en-IN', {
+                                dateStyle: 'medium',
+                                timeStyle: 'short'
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600 font-sans leading-relaxed bg-white p-2.5 rounded-lg border border-slate-150 whitespace-pre-wrap">
+                            {notif.message}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Financial/Checkout logs if completed */}
