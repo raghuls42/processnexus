@@ -22,7 +22,8 @@ import {
   Clock,
   X,
   Mail,
-  ExternalLink
+  ExternalLink,
+  Box
 } from 'lucide-react'
 import { ServiceTimePredictor } from '../utils/mlModel'
 
@@ -39,6 +40,7 @@ export default function CheckOut() {
   const [searchPhone, setSearchPhone] = useState('')
   const [jobs, setJobs] = useState([])
   const [selectedJob, setSelectedJob] = useState(null)
+  const [selectedBundleJobs, setSelectedBundleJobs] = useState([])
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState(null)
@@ -111,6 +113,7 @@ export default function CheckOut() {
     setMessage(null)
     setJobs([])
     setSelectedJob(null)
+    setSelectedBundleJobs([])
     setPaymentData({ payment_method: '', amount_paid: '' })
 
     const results = await getJobsByPhone(searchPhone.trim())
@@ -132,10 +135,26 @@ export default function CheckOut() {
   const handleSelectJob = (job) => {
     setSelectedJob(job)
     setWhatsappSent(false)
-    setPaymentData({
-      payment_method: '',
-      amount_paid: job.service_cost > 0 ? String(job.service_cost) : '',
-    })
+    if (job.bundle_id) {
+      // Find all ready jobs in the same bundle
+      const bundleJobs = jobs.filter(j => j.bundle_id === job.bundle_id)
+      setSelectedBundleJobs(bundleJobs)
+      
+      const totalOriginalCost = bundleJobs.reduce((sum, j) => sum + (j.service_cost || 0), 0)
+      const discount = Math.round(totalOriginalCost * 0.15)
+      const finalCost = totalOriginalCost - discount
+
+      setPaymentData({
+        payment_method: '',
+        amount_paid: finalCost > 0 ? String(finalCost) : '',
+      })
+    } else {
+      setSelectedBundleJobs([])
+      setPaymentData({
+        payment_method: '',
+        amount_paid: job.service_cost > 0 ? String(job.service_cost) : '',
+      })
+    }
     setMessage(null)
   }
 
@@ -162,24 +181,55 @@ export default function CheckOut() {
     try {
       const templates = await getNotificationTemplates()
       
-      const interpolate = (templateStr) => {
-        if (!templateStr) return ''
-        return templateStr
-          .replace(/\{customer_name\}/g, selectedJob.customer_name)
-          .replace(/\{job_id\}/g, selectedJob.job_id)
-          .replace(/\{brand\}/g, selectedJob.brand)
-          .replace(/\{model_name\}/g, selectedJob.model_name || 'N/A')
-          .replace(/\{amount_paid\}/g, paymentData.amount_paid)
-          .replace(/\{payment_method\}/g, paymentData.payment_method)
+      const isBundle = selectedBundleJobs.length > 1
+      let waMsg = ''
+      let emailSubject = ''
+      let emailBody = ''
+
+      if (isBundle) {
+        // Multi-appliance bundle checkout receipt
+        const totalPaid = parseFloat(paymentData.amount_paid)
+        const totalOriginal = selectedBundleJobs.reduce((sum, j) => sum + (j.service_cost || 0), 0)
+        const discountAmount = totalOriginal - totalPaid
+
+        waMsg = `Hello ${selectedJob.customer_name}! Your Bundle Service (Bundle ID: ${selectedJob.bundle_id}) containing ${selectedBundleJobs.length} appliances has been successfully completed and collected.\n`
+        selectedBundleJobs.forEach((job, idx) => {
+          waMsg += `${idx + 1}. ${job.brand} ${job.model_name || ''} - Job: ${job.job_id}\n`
+        })
+        waMsg += `Total Original Cost: ₹${totalOriginal}\n`
+        if (discountAmount > 0) {
+          waMsg += `Bundle Discount Applied: ₹${discountAmount} (15% Off)\n`
+        }
+        waMsg += `Amount Paid: ₹${totalPaid} (${paymentData.payment_method}). Thank you for choosing us! 🙏`
+
+        emailSubject = `Service Bundle Completed - Receipt for Bundle ${selectedJob.bundle_id}`
+        emailBody = `Dear ${selectedJob.customer_name},\n\nThank you for collecting your service bundle (Bundle ID: ${selectedJob.bundle_id}).\n\n--- SERVICE RECEIPT ---\n`
+        selectedBundleJobs.forEach((job, idx) => {
+          emailBody += `Appliance #${idx + 1}:\n- ${job.brand} ${job.model_name || ''} (${job.product_category})\n- Job ID: ${job.job_id}\n- Service Cost: ₹${job.service_cost}\n- Spares: ${job.spare_replaced || 'None'}\n\n`
+        })
+        emailBody += `-----------------------\nTotal Original Cost: ₹${totalOriginal}\n`
+        if (discountAmount > 0) {
+          emailBody += `Bundle Discount Applied: ₹${discountAmount} (15% Off)\n`
+        }
+        emailBody += `Total Amount Paid  : ₹${totalPaid}\nPayment Mode       : ${paymentData.payment_method}\n-----------------------\n\nWe hope your appliances are working perfectly. Please feel free to contact us if you need any further assistance.\n\nThank you!`
+      } else {
+        const interpolate = (templateStr) => {
+          if (!templateStr) return ''
+          return templateStr
+            .replace(/\{customer_name\}/g, selectedJob.customer_name)
+            .replace(/\{job_id\}/g, selectedJob.job_id)
+            .replace(/\{brand\}/g, selectedJob.brand)
+            .replace(/\{model_name\}/g, selectedJob.model_name || 'N/A')
+            .replace(/\{amount_paid\}/g, paymentData.amount_paid)
+            .replace(/\{payment_method\}/g, paymentData.payment_method)
+        }
+
+        const defaultWaMsg = `Hello ${selectedJob.customer_name}! Your ${selectedJob.brand}${selectedJob.model_name ? ' ' + selectedJob.model_name : ''} has been successfully serviced and collected. Job ID: ${selectedJob.job_id}. Amount paid: ₹${paymentData.amount_paid} (${paymentData.payment_method}). Thank you for choosing us! 🙏`
+        waMsg = templates.closed_sms ? interpolate(templates.closed_sms) : defaultWaMsg
+
+        emailSubject = `Service Completed - Receipt for Job ${selectedJob.job_id}`
+        emailBody = `Dear ${selectedJob.customer_name},\n\nThank you for collecting your ${selectedJob.brand}${selectedJob.model_name ? ' ' + selectedJob.model_name : ''}.\n\n--- SERVICE RECEIPT ---\nJob ID       : ${selectedJob.job_id}\nAppliance    : ${selectedJob.brand} ${selectedJob.model_name || ''} (${selectedJob.product_category})\nParts Used   : ${selectedJob.spare_replaced || 'None'}\nAmount Paid  : ₹${paymentData.amount_paid}\nPayment Mode : ${paymentData.payment_method}\nService Date : ${formatDate(selectedJob.checkin_date)}\n-----------------------\n\nWe hope your appliance is working perfectly. Please feel free to contact us if you need any further assistance.\n\nThank you!`
       }
-
-      // Build WhatsApp receipt message
-      const defaultWaMsg = `Hello ${selectedJob.customer_name}! Your ${selectedJob.brand}${selectedJob.model_name ? ' ' + selectedJob.model_name : ''} has been successfully serviced and collected. Job ID: ${selectedJob.job_id}. Amount paid: ₹${paymentData.amount_paid} (${paymentData.payment_method}). Thank you for choosing us! 🙏`
-      const waMsg = templates.closed_sms ? interpolate(templates.closed_sms) : defaultWaMsg
-
-      // Build Email receipt
-      const emailSubject = `Service Completed - Receipt for Job ${selectedJob.job_id}`
-      const emailBody = `Dear ${selectedJob.customer_name},\n\nThank you for collecting your ${selectedJob.brand}${selectedJob.model_name ? ' ' + selectedJob.model_name : ''}.\n\n--- SERVICE RECEIPT ---\nJob ID       : ${selectedJob.job_id}\nAppliance    : ${selectedJob.brand} ${selectedJob.model_name || ''} (${selectedJob.product_category})\nParts Used   : ${selectedJob.spare_replaced || 'None'}\nAmount Paid  : ₹${paymentData.amount_paid}\nPayment Mode : ${paymentData.payment_method}\nService Date : ${formatDate(selectedJob.checkin_date)}\n-----------------------\n\nWe hope your appliance is working perfectly. Please feel free to contact us if you need any further assistance.\n\nThank you!`
 
       setReceiptData({
         whatsappMessage: waMsg,
@@ -207,13 +257,25 @@ export default function CheckOut() {
     setWhatsappSent(true)
 
     // Log to Firestore
-    logNotification(selectedJob.job_id, selectedJob.id, {
-      customer_name: selectedJob.customer_name,
-      contact_number: selectedJob.contact_number,
-      channel: 'WhatsApp',
-      type: 'Closed',
-      message: receiptData.whatsappMessage
-    }).catch(console.error)
+    if (selectedBundleJobs.length > 1) {
+      selectedBundleJobs.forEach(job => {
+        logNotification(job.job_id, job.id, {
+          customer_name: job.customer_name,
+          contact_number: job.contact_number,
+          channel: 'WhatsApp',
+          type: 'Closed',
+          message: receiptData.whatsappMessage
+        }).catch(console.error)
+      })
+    } else {
+      logNotification(selectedJob.job_id, selectedJob.id, {
+        customer_name: selectedJob.customer_name,
+        contact_number: selectedJob.contact_number,
+        channel: 'WhatsApp',
+        type: 'Closed',
+        message: receiptData.whatsappMessage
+      }).catch(console.error)
+    }
   }
 
   // Opens email client with pre-filled receipt (FREE via mailto)
@@ -223,44 +285,82 @@ export default function CheckOut() {
     const mailto = `mailto:${email}?subject=${encodeURIComponent(receiptData.emailSubject)}&body=${encodeURIComponent(receiptData.emailBody)}`
     window.open(mailto, '_blank')
 
-    logNotification(selectedJob.job_id, selectedJob.id, {
-      customer_name: selectedJob.customer_name,
-      contact_number: email,
-      channel: 'Email',
-      type: 'Closed',
-      message: receiptData.emailBody
-    }).catch(console.error)
+    if (selectedBundleJobs.length > 1) {
+      selectedBundleJobs.forEach(job => {
+        logNotification(job.job_id, job.id, {
+          customer_name: job.customer_name,
+          contact_number: email,
+          channel: 'Email',
+          type: 'Closed',
+          message: receiptData.emailBody
+        }).catch(console.error)
+      })
+    } else {
+      logNotification(selectedJob.job_id, selectedJob.id, {
+        customer_name: selectedJob.customer_name,
+        contact_number: email,
+        channel: 'Email',
+        type: 'Closed',
+        message: receiptData.emailBody
+      }).catch(console.error)
+    }
   }
 
   const handleConfirmCheckout = async () => {
     setSubmitting(true)
     try {
-      const result = await checkoutJob(selectedJob.id, paymentData)
-      if (result.success) {
+      const isBundle = selectedBundleJobs.length > 1
+      
+      if (isBundle) {
+        // We checkout all ready jobs in the bundle
+        const totalPaid = parseFloat(paymentData.amount_paid)
+        const totalOriginal = selectedBundleJobs.reduce((sum, j) => sum + (j.service_cost || 0), 0)
+        
+        for (const job of selectedBundleJobs) {
+          // split the paid amount proportionally based on individual original costs
+          const proportion = totalOriginal > 0 ? (job.service_cost || 0) / totalOriginal : (1 / selectedBundleJobs.length)
+          const sharePaid = Math.round(totalPaid * proportion * 100) / 100
+          
+          await checkoutJob(job.id, {
+            payment_method: paymentData.payment_method,
+            amount_paid: sharePaid
+          })
+        }
+        
         setMessage({
           type: 'success',
-          text: `✓ Job ${selectedJob.job_id} closed! Payment of ₹${paymentData.amount_paid} recorded.`
+          text: `✓ Bundle ${selectedJob.bundle_id} closed! Payment of ₹${paymentData.amount_paid} recorded for ${selectedBundleJobs.length} jobs.`
         })
-        setShowReceiptModal(false)
-        setSelectedJob(null)
-        setJobs([])
-        setSearchPhone('')
-        setPaymentData({ payment_method: '', amount_paid: '' })
-
-        try {
-          const allJobs = await getAllJobs()
-          const ml = new ServiceTimePredictor()
-          ml.train(allJobs)
-          setPredictor(ml)
-        } catch (err) {
-          console.error(err)
-        }
       } else {
-        setMessage({ type: 'error', text: `Checkout failed: ${result.error}` })
+        const result = await checkoutJob(selectedJob.id, paymentData)
+        if (result.success) {
+          setMessage({
+            type: 'success',
+            text: `✓ Job ${selectedJob.job_id} closed! Payment of ₹${paymentData.amount_paid} recorded.`
+          })
+        } else {
+          throw new Error(result.error || 'Checkout failed')
+        }
+      }
+      
+      setShowReceiptModal(false)
+      setSelectedJob(null)
+      setSelectedBundleJobs([])
+      setJobs([])
+      setSearchPhone('')
+      setPaymentData({ payment_method: '', amount_paid: '' })
+
+      try {
+        const allJobs = await getAllJobs()
+        const ml = new ServiceTimePredictor()
+        ml.train(allJobs)
+        setPredictor(ml)
+      } catch (err) {
+        console.error(err)
       }
     } catch (err) {
       console.error(err)
-      setMessage({ type: 'error', text: 'Error confirming checkout.' })
+      setMessage({ type: 'error', text: err.message || 'Error confirming checkout.' })
     }
     setSubmitting(false)
   }
@@ -339,6 +439,11 @@ export default function CheckOut() {
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm font-bold text-slate-800">{job.job_id}</span>
                       <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full font-semibold">{job.status}</span>
+                      {job.is_bundle && (
+                        <span className="text-[10px] bg-teal-50 text-teal-700 border border-teal-100 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                          <Box className="w-3 h-3 text-teal-600" /> Bundle: {job.bundle_id}
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-slate-600">
                       {job.brand} {job.model_name} — <span className="text-slate-500">{job.product_category}</span>
@@ -361,110 +466,179 @@ export default function CheckOut() {
           <div className="space-y-6">
 
             {/* Customer & Service Card */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="bg-slate-900 p-5 text-white">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-mono text-sm text-teal-300 bg-white/10 px-2.5 py-0.5 rounded font-bold">{selectedJob.job_id}</span>
-                    <h3 className="text-lg font-bold mt-2">{selectedJob.brand} {selectedJob.model_name || ''}</h3>
-                    <p className="text-slate-400 text-sm">{selectedJob.product_category} • {selectedJob.warranty_status}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-slate-400">Status</p>
-                    <span className="text-sm font-bold text-teal-300">{selectedJob.status}</span>
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden animate-fade-in">
+              {selectedBundleJobs.length > 1 ? (
+                // Bundle Card Header
+                <div className="bg-gradient-to-r from-teal-900 to-indigo-950 p-5 text-white">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-mono text-xs text-teal-300 bg-white/10 px-2.5 py-0.5 rounded font-extrabold flex items-center gap-1.5 w-fit">
+                        <Box className="w-3.5 h-3.5" /> Bundle: {selectedJob.bundle_id}
+                      </span>
+                      <h3 className="text-lg font-bold mt-2">Bundle Service Checkout</h3>
+                      <p className="text-slate-400 text-sm">Customer: {selectedJob.customer_name} • {selectedBundleJobs.length} Appliance(s) Ready</p>
+                    </div>
+                    <div className="text-right bg-teal-500/10 px-3 py-1.5 rounded-lg border border-teal-500/30">
+                      <span className="text-xs text-teal-300 block font-semibold">Deal Applied</span>
+                      <span className="text-sm font-bold text-teal-200">15% Bundle Discount</span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                // Single Job Card Header
+                <div className="bg-slate-900 p-5 text-white">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-mono text-sm text-teal-300 bg-white/10 px-2.5 py-0.5 rounded font-bold">{selectedJob.job_id}</span>
+                      <h3 className="text-lg font-bold mt-2">{selectedJob.brand} {selectedJob.model_name || ''}</h3>
+                      <p className="text-slate-400 text-sm">{selectedJob.product_category} • {selectedJob.warranty_status}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-slate-400">Status</p>
+                      <span className="text-sm font-bold text-teal-300">{selectedJob.status}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
-                {/* Customer Info */}
-                <div className="space-y-4">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Customer Details</h4>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2.5 text-slate-700">
-                      <User className="w-4 h-4 text-slate-400" />
-                      <span className="font-semibold text-slate-800">{selectedJob.customer_name}</span>
-                    </div>
-                    <div className="flex items-center gap-2.5 text-slate-700">
-                      <Phone className="w-4 h-4 text-slate-400" />
-                      <span>{selectedJob.contact_number}</span>
-                    </div>
-                    {selectedJob.customer_email && (
-                      <div className="flex items-center gap-2.5 text-indigo-600">
-                        <Mail className="w-4 h-4 text-slate-400" />
-                        <span className="text-sm">{selectedJob.customer_email}</span>
+              <div className="p-6 space-y-6 text-sm">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Customer Info */}
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Customer Details</h4>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2.5 text-slate-700">
+                        <User className="w-4 h-4 text-slate-400" />
+                        <span className="font-semibold text-slate-800">{selectedJob.customer_name}</span>
                       </div>
-                    )}
-                    <div className="flex items-center gap-2.5 text-slate-600">
-                      <Calendar className="w-4 h-4 text-slate-400" />
-                      <span className="text-xs">Checked In: {formatDate(selectedJob.checkin_date)}</span>
-                    </div>
-                    <div className="flex items-center gap-2.5 text-slate-600">
-                      <Tag className="w-4 h-4 text-slate-400" />
-                      <span>Technician: <span className="font-medium text-slate-800">{selectedJob.assigned_technician}</span></span>
+                      <div className="flex items-center gap-2.5 text-slate-700">
+                        <Phone className="w-4 h-4 text-slate-400" />
+                        <span>{selectedJob.contact_number}</span>
+                      </div>
+                      {selectedJob.customer_email && (
+                        <div className="flex items-center gap-2.5 text-indigo-600">
+                          <Mail className="w-4 h-4 text-slate-400" />
+                          <span className="text-sm">{selectedJob.customer_email}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2.5 text-slate-600">
+                        <Calendar className="w-4 h-4 text-slate-400" />
+                        <span className="text-xs">Checked In: {formatDate(selectedJob.checkin_date)}</span>
+                      </div>
                     </div>
                   </div>
+
+                  {/* Pricing Summary */}
+                  {selectedBundleJobs.length > 1 ? (
+                    <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pricing Breakdown</h4>
+                      <div className="space-y-2">
+                        {selectedBundleJobs.map(job => (
+                          <div key={job.id} className="flex justify-between text-xs text-slate-600">
+                            <span>{job.brand} ({job.product_category})</span>
+                            <span className="font-mono font-medium">₹{job.service_cost || 0}</span>
+                          </div>
+                        ))}
+                        <div className="border-t border-slate-200/60 pt-2 flex justify-between font-medium text-slate-700">
+                          <span>Original Total</span>
+                          <span className="font-mono">₹{selectedBundleJobs.reduce((sum, j) => sum + (j.service_cost || 0), 0)}</span>
+                        </div>
+                        <div className="flex justify-between text-emerald-600 font-semibold text-xs">
+                          <span>Bundle Discount (15%)</span>
+                          <span className="font-mono">-₹{Math.round(selectedBundleJobs.reduce((sum, j) => sum + (j.service_cost || 0), 0) * 0.15)}</span>
+                        </div>
+                        <div className="border-t border-slate-300 pt-2 flex justify-between font-bold text-slate-800 text-sm">
+                          <span>Final Amount Due</span>
+                          <span className="font-mono text-teal-600">
+                            ₹{selectedBundleJobs.reduce((sum, j) => sum + (j.service_cost || 0), 0) - Math.round(selectedBundleJobs.reduce((sum, j) => sum + (j.service_cost || 0), 0) * 0.15)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Single Job Repair Info */
+                    <div className="space-y-4">
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Service Summary</h4>
+                      <div className="space-y-3">
+                        <div className="flex items-start gap-2.5 text-slate-700">
+                          <Wrench className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-xs text-slate-400 mb-0.5">Spares Replaced</p>
+                            <p className="font-medium text-slate-800 whitespace-pre-wrap bg-slate-50 border border-slate-100 p-2 rounded-lg">
+                              {selectedJob.spare_replaced || 'None'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2.5">
+                          <IndianRupee className="w-4 h-4 text-slate-400" />
+                          <div>
+                            <p className="text-xs text-slate-400 mb-0.5">Service Cost Quoted</p>
+                            <p className="text-xl font-bold text-teal-600">₹{selectedJob.service_cost || 0}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Repair Info */}
-                <div className="space-y-4">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Service Summary</h4>
-                  <div className="space-y-3">
-                    <div className="flex items-start gap-2.5 text-slate-700">
-                      <Wrench className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
-                      <div>
-                        <p className="text-xs text-slate-400 mb-0.5">Spares Replaced</p>
-                        <p className="font-medium text-slate-800 whitespace-pre-wrap bg-slate-50 border border-slate-100 p-2 rounded-lg">
-                          {selectedJob.spare_replaced || 'None'}
+                {/* Bundle Appliance Details or Single Job details */}
+                {selectedBundleJobs.length > 1 ? (
+                  <div className="pt-4 border-t border-slate-100 space-y-3">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Appliances Included</h4>
+                    <div className="grid grid-cols-1 gap-3">
+                      {selectedBundleJobs.map((job, idx) => (
+                        <div key={job.id} className="p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-700">#{idx + 1} {job.brand} {job.model_name || ''}</span>
+                            <span className="text-[10px] font-mono bg-teal-50 text-teal-700 border border-teal-100 px-2 py-0.5 rounded-full font-bold">{job.job_id}</span>
+                          </div>
+                          <p className="text-xs text-slate-500"><strong>Fault:</strong> {job.fault_description}</p>
+                          <p className="text-xs text-slate-500"><strong>Spares Used:</strong> {job.spare_replaced || 'None'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Fault Description */}
+                    <div className="pt-4 border-t border-slate-100">
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        Customer Reported Fault
+                      </h4>
+                      <p className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-slate-700 font-medium whitespace-pre-wrap leading-relaxed">
+                        {selectedJob.fault_description || 'No fault description provided.'}
+                      </p>
+                    </div>
+
+                    {/* ML vs Actual Duration */}
+                    <div className="pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="bg-teal-50/50 border border-teal-100/50 p-4 rounded-xl space-y-1">
+                        <span className="text-[10px] text-teal-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
+                          <Sparkles className="w-3.5 h-3.5 text-teal-500" />
+                          AI Predicted Duration
+                        </span>
+                        <p className="text-base font-bold text-slate-800">
+                          {predictor ? predictor.predict(selectedJob.product_category, selectedJob.fault_description, selectedJob.spare_replaced) : 'Calculating...'}
                         </p>
+                        <span className="text-[10px] text-slate-400 block">Estimated duration using ML model</span>
+                      </div>
+                      <div className="bg-indigo-50/50 border border-indigo-100/50 p-4 rounded-xl space-y-1">
+                        <span className="text-[10px] text-indigo-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                          Actual Elapsed Duration
+                        </span>
+                        <p className="text-base font-bold text-slate-800">
+                          {getActualDuration(selectedJob.checkin_date, null)}
+                        </p>
+                        <span className="text-[10px] text-slate-400 block">Time elapsed since check-in</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2.5">
-                      <IndianRupee className="w-4 h-4 text-slate-400" />
-                      <div>
-                        <p className="text-xs text-slate-400 mb-0.5">Service Cost Quoted</p>
-                        <p className="text-xl font-bold text-teal-600">₹{selectedJob.service_cost || 0}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Fault Description */}
-                <div className="col-span-1 md:col-span-2 pt-4 border-t border-slate-100">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-amber-500" />
-                    Customer Reported Fault
-                  </h4>
-                  <p className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-slate-700 font-medium whitespace-pre-wrap leading-relaxed">
-                    {selectedJob.fault_description || 'No fault description provided.'}
-                  </p>
-                </div>
-
-                {/* ML vs Actual Duration */}
-                <div className="col-span-1 md:col-span-2 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="bg-teal-50/50 border border-teal-100/50 p-4 rounded-xl space-y-1">
-                    <span className="text-[10px] text-teal-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5 text-teal-500" />
-                      AI Predicted Duration
-                    </span>
-                    <p className="text-base font-bold text-slate-800">
-                      {predictor ? predictor.predict(selectedJob.product_category, selectedJob.fault_description, selectedJob.spare_replaced) : 'Calculating...'}
-                    </p>
-                    <span className="text-[10px] text-slate-400 block">Estimated duration using ML model</span>
-                  </div>
-                  <div className="bg-indigo-50/50 border border-indigo-100/50 p-4 rounded-xl space-y-1">
-                    <span className="text-[10px] text-indigo-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-indigo-500" />
-                      Actual Elapsed Duration
-                    </span>
-                    <p className="text-base font-bold text-slate-800">
-                      {getActualDuration(selectedJob.checkin_date, null)}
-                    </p>
-                    <span className="text-[10px] text-slate-400 block">Time elapsed since check-in</span>
-                  </div>
-                </div>
+                  </>
+                )}
               </div>
             </div>
+
 
             {/* Payment Form */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">

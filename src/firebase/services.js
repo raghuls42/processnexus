@@ -27,6 +27,28 @@ export const generateJobId = async () => {
   return `SVC-${year}-${String(count).padStart(3, '0')}`
 }
 
+// Generate a unique bundle ID like "BNDL-2026-001"
+export const generateBundleId = async () => {
+  const today = new Date()
+  const year = today.getFullYear()
+  
+  const jobsRef = collection(db, 'service_jobs')
+  const q = query(jobsRef, where('checkin_date', '>=', new Date(year, 0, 1)))
+  const snapshot = await getDocs(q)
+  
+  const bundleIds = new Set()
+  snapshot.docs.forEach(doc => {
+    const data = doc.data()
+    if (data.bundle_id) {
+      bundleIds.add(data.bundle_id)
+    }
+  })
+  const count = bundleIds.size + 1
+  
+  return `BNDL-${year}-${String(count).padStart(3, '0')}`
+}
+
+
 // Save a new job to Firestore
 export const createJob = async (jobData) => {
   try {

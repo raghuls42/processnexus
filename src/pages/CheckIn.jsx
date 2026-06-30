@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { createJob, getAllJobs, getNotificationTemplates, logNotification } from '../firebase/services'
+import { createJob, getAllJobs, getNotificationTemplates, logNotification, generateBundleId } from '../firebase/services'
 import { APPLIANCE_TYPES, BRAND_NAMES, WARRANTY_STATUS, TECHNICIAN_NAMES, STAFF_NAMES } from '../constants'
-import { ShieldCheck, ShieldOff, Sparkles, ExternalLink, Mail } from 'lucide-react'
+import { ShieldCheck, ShieldOff, Sparkles, ExternalLink, Mail, Plus, Trash2, Box } from 'lucide-react'
 import { ServiceTimePredictor } from '../utils/mlModel'
 
 function WhatsAppIcon({ className, style }) {
@@ -13,19 +13,24 @@ function WhatsAppIcon({ className, style }) {
 }
 
 export default function CheckIn() {
-  const [formData, setFormData] = useState({
+  const [customerData, setCustomerData] = useState({
     customer_name: '',
     contact_number: '',
     customer_email: '',
-    product_category: '',
-    brand: '',
-    custom_brand: '',
-    model_name: '',
-    fault_description: '',
-    warranty_status: 'Out of Warranty',
-    assigned_technician: '',
     checkin_staff: '',
   })
+
+  const [items, setItems] = useState([
+    {
+      product_category: '',
+      brand: '',
+      custom_brand: '',
+      model_name: '',
+      fault_description: '',
+      warranty_status: 'Out of Warranty',
+      assigned_technician: '',
+    }
+  ])
 
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
@@ -46,21 +51,55 @@ export default function CheckIn() {
     initPredictor()
   }, [])
 
-  const handleChange = (e) => {
+  const handleCustomerChange = (e) => {
     const { name, value } = e.target
-    setFormData(prev => ({ ...prev, [name]: value }))
+    setCustomerData(prev => ({ ...prev, [name]: value }))
+  }
+
+  const handleItemChange = (index, name, value) => {
+    setItems(prev => prev.map((item, idx) => {
+      if (idx === index) {
+        return { ...item, [name]: value }
+      }
+      return item
+    }))
+  }
+
+  const addItem = () => {
+    setItems(prev => [
+      ...prev,
+      {
+        product_category: '',
+        brand: '',
+        custom_brand: '',
+        model_name: '',
+        fault_description: '',
+        warranty_status: 'Out of Warranty',
+        assigned_technician: '',
+      }
+    ])
+  }
+
+  const removeItem = (index) => {
+    if (items.length <= 1) return
+    setItems(prev => prev.filter((_, idx) => idx !== index))
   }
 
   const validateForm = () => {
-    if (!formData.customer_name.trim()) return 'Customer name required'
-    if (!formData.contact_number.trim()) return 'Contact number required'
-    if (formData.contact_number.length < 10) return 'Valid phone number required'
-    if (!formData.product_category) return 'Appliance type required'
-    if (!formData.brand) return 'Brand required'
-    if (formData.brand === 'Other' && !formData.custom_brand.trim()) return 'Enter custom brand name'
-    if (!formData.fault_description.trim()) return 'Fault description required'
-    if (!formData.assigned_technician) return 'Technician required'
-    if (!formData.checkin_staff) return 'Staff name required'
+    if (!customerData.customer_name.trim()) return 'Customer name required'
+    if (!customerData.contact_number.trim()) return 'Contact number required'
+    if (customerData.contact_number.length < 10) return 'Valid phone number required'
+    if (!customerData.checkin_staff) return 'Staff name required'
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      const label = items.length > 1 ? `Product #${i + 1}: ` : ''
+      if (!item.product_category) return `${label}Appliance type required`
+      if (!item.brand) return `${label}Brand required`
+      if (item.brand === 'Other' && !item.custom_brand.trim()) return `${label}Enter custom brand name`
+      if (!item.fault_description.trim()) return `${label}Fault description required`
+      if (!item.assigned_technician) return `${label}Technician required`
+    }
     return null
   }
 
@@ -76,65 +115,120 @@ export default function CheckIn() {
     setLoading(true)
     setMessage(null)
 
-    const jobData = {
-      ...formData,
-      brand: formData.brand === 'Other' ? formData.custom_brand.trim() : formData.brand,
-    }
-    delete jobData.custom_brand
+    try {
+      const isBundle = items.length > 1
+      const bundleId = isBundle ? await generateBundleId() : null
 
-    const result = await createJob(jobData)
-    
-    if (result.success) {
-      // Build notification messages
-      let waIntakeMsg = `Hello ${formData.customer_name}! We have received your ${jobData.brand}${formData.model_name ? ' ' + formData.model_name : ''} for service. Your Job ID is: ${result.jobId}. Assigned Technician: ${formData.assigned_technician}. We will notify you once it is ready. Thank you!`
-
-      const emailSubject = `Service Job Confirmed - ${result.jobId}`
-      const emailBody = `Dear ${formData.customer_name},\n\nThank you for visiting us. We have received your ${jobData.brand}${formData.model_name ? ' ' + formData.model_name : ''} for repair service.\n\nJob ID: ${result.jobId}\nAssigned Technician: ${formData.assigned_technician}\n\nWe will contact you once the repair is completed. Please carry this Job ID when you come to collect your appliance.\n\nThank you!`
-
-      try {
-        const templates = await getNotificationTemplates()
-        const interpolate = (templateStr) => {
-          if (!templateStr) return ''
-          return templateStr
-            .replace(/\{customer_name\}/g, formData.customer_name)
-            .replace(/\{job_id\}/g, result.jobId)
-            .replace(/\{brand\}/g, jobData.brand)
-            .replace(/\{model_name\}/g, formData.model_name || 'N/A')
-            .replace(/\{fault_description\}/g, formData.fault_description)
-            .replace(/\{assigned_technician\}/g, formData.assigned_technician)
+      const createdJobs = []
+      
+      for (const item of items) {
+        const finalBrand = item.brand === 'Other' ? item.custom_brand.trim() : item.brand
+        const jobData = {
+          customer_name: customerData.customer_name,
+          contact_number: customerData.contact_number,
+          customer_email: customerData.customer_email,
+          checkin_staff: customerData.checkin_staff,
+          product_category: item.product_category,
+          brand: finalBrand,
+          model_name: item.model_name,
+          fault_description: item.fault_description,
+          warranty_status: item.warranty_status,
+          assigned_technician: item.assigned_technician,
+          is_bundle: isBundle,
+          bundle_id: bundleId,
         }
-        if (templates.intake_sms) waIntakeMsg = interpolate(templates.intake_sms)
 
-        await logNotification(result.jobId, result.docId, {
-          customer_name: formData.customer_name,
-          contact_number: formData.contact_number,
-          channel: 'WhatsApp',
-          type: 'Intake',
-          message: waIntakeMsg
-        })
-
-        if (formData.customer_email.trim()) {
-          await logNotification(result.jobId, result.docId, {
-            customer_name: formData.customer_name,
-            contact_number: formData.customer_email,
-            channel: 'Email',
-            type: 'Intake',
-            message: emailBody
+        const result = await createJob(jobData)
+        if (result.success) {
+          createdJobs.push({
+            jobId: result.jobId,
+            docId: result.docId,
+            brand: finalBrand,
+            model_name: item.model_name,
+            product_category: item.product_category,
+            fault_description: item.fault_description,
+            assigned_technician: item.assigned_technician,
           })
+        } else {
+          throw new Error(result.error || 'Failed to create job')
         }
-      } catch (err) {
-        console.error('Error logging intake notification:', err)
+      }
+
+      // Build consolidated notification message
+      let waIntakeMsg = ''
+      let emailSubject = ''
+      let emailBody = ''
+
+      if (isBundle) {
+        waIntakeMsg = `Hello ${customerData.customer_name}! We have received your Bundle Service request (Bundle ID: ${bundleId}) with ${createdJobs.length} appliances:\n`
+        createdJobs.forEach((job, idx) => {
+          waIntakeMsg += `${idx + 1}. ${job.brand} ${job.model_name || ''} (${job.product_category}) - Job ID: ${job.jobId}\n`
+        })
+        waIntakeMsg += `We will notify you once they are serviced. Thank you!`
+
+        emailSubject = `Service Bundle Confirmed - ${bundleId}`
+        emailBody = `Dear ${customerData.customer_name},\n\nThank you for visiting us. We have successfully registered your service bundle.\n\nBundle ID: ${bundleId}\nTotal Appliances: ${createdJobs.length}\n\n`
+        createdJobs.forEach((job, idx) => {
+          emailBody += `Appliance #${idx + 1}:\n- Type: ${job.product_category}\n- Brand/Model: ${job.brand} ${job.model_name || ''}\n- Job ID: ${job.jobId}\n- Assigned Tech: ${job.assigned_technician}\n- Fault: ${job.fault_description}\n\n`
+        })
+        emailBody += `We will contact you once the repairs are completed. Please carry this Bundle ID when you come to collect your appliances.\n\nThank you!`
+      } else {
+        const job = createdJobs[0]
+        waIntakeMsg = `Hello ${customerData.customer_name}! We have received your ${job.brand}${job.model_name ? ' ' + job.model_name : ''} for service. Your Job ID is: ${job.jobId}. Assigned Technician: ${job.assigned_technician}. We will notify you once it is ready. Thank you!`
+        
+        emailSubject = `Service Job Confirmed - ${job.jobId}`
+        emailBody = `Dear ${customerData.customer_name},\n\nThank you for visiting us. We have received your ${job.brand}${job.model_name ? ' ' + job.model_name : ''} for repair service.\n\nJob ID: ${job.jobId}\nAssigned Technician: ${job.assigned_technician}\n\nWe will contact you once the repair is completed. Please carry this Job ID when you come to collect your appliance.\n\nThank you!`
+
+        // Interpolate templates if available
+        try {
+          const templates = await getNotificationTemplates()
+          const interpolate = (templateStr) => {
+            if (!templateStr) return ''
+            return templateStr
+              .replace(/\{customer_name\}/g, customerData.customer_name)
+              .replace(/\{job_id\}/g, job.jobId)
+              .replace(/\{brand\}/g, job.brand)
+              .replace(/\{model_name\}/g, job.model_name || 'N/A')
+              .replace(/\{fault_description\}/g, job.fault_description)
+              .replace(/\{assigned_technician\}/g, job.assigned_technician)
+          }
+          if (templates.intake_sms) waIntakeMsg = interpolate(templates.intake_sms)
+        } catch (e) {
+          console.error(e)
+        }
+      }
+
+      // Log notifications for all created jobs
+      for (const job of createdJobs) {
+        try {
+          await logNotification(job.jobId, job.docId, {
+            customer_name: customerData.customer_name,
+            contact_number: customerData.contact_number,
+            channel: 'WhatsApp',
+            type: 'Intake',
+            message: waIntakeMsg
+          })
+
+          if (customerData.customer_email.trim()) {
+            await logNotification(job.jobId, job.docId, {
+              customer_name: customerData.customer_name,
+              contact_number: customerData.customer_email,
+              channel: 'Email',
+              type: 'Intake',
+              message: emailBody
+            })
+          }
+        } catch (err) {
+          console.error('Error logging intake notification:', err)
+        }
       }
 
       setLastCreatedJob({
-        jobId: result.jobId,
-        docId: result.docId,
-        customer_name: formData.customer_name,
-        contact_number: formData.contact_number,
-        customer_email: formData.customer_email.trim(),
-        brand: jobData.brand,
-        model_name: formData.model_name,
-        assigned_technician: formData.assigned_technician,
+        jobId: isBundle ? bundleId : createdJobs[0].jobId,
+        isBundle,
+        customer_name: customerData.customer_name,
+        contact_number: customerData.contact_number,
+        customer_email: customerData.customer_email.trim(),
         waMessage: waIntakeMsg,
         emailSubject,
         emailBody,
@@ -142,24 +236,31 @@ export default function CheckIn() {
 
       setMessage({ 
         type: 'success', 
-        text: `Job ${result.jobId} created! Notify customer below.` 
+        text: isBundle 
+          ? `Bundle ${bundleId} created with ${createdJobs.length} jobs! Notify customer below.` 
+          : `Job ${createdJobs[0].jobId} created! Notify customer below.` 
       })
 
-      setFormData({
+      // Reset form
+      setCustomerData({
         customer_name: '',
         contact_number: '',
         customer_email: '',
-        product_category: '',
-        brand: '',
-        custom_brand: '',
-        model_name: '',
-        fault_description: '',
-        warranty_status: 'Out of Warranty',
-        assigned_technician: '',
         checkin_staff: '',
       })
+      setItems([
+        {
+          product_category: '',
+          brand: '',
+          custom_brand: '',
+          model_name: '',
+          fault_description: '',
+          warranty_status: 'Out of Warranty',
+          assigned_technician: '',
+        }
+      ])
 
-      // Re-train predictor with the new job data
+      // Re-train predictor
       try {
         const allJobs = await getAllJobs()
         const ml = new ServiceTimePredictor()
@@ -168,26 +269,24 @@ export default function CheckIn() {
       } catch (err) {
         console.error(err)
       }
-    } else {
-      setMessage({ type: 'error', text: `Error: ${result.error}` })
+    } catch (err) {
+      setMessage({ type: 'error', text: `Error: ${err.message}` })
+    } finally {
+      setLoading(false)
     }
-
-    setLoading(false)
   }
 
-  const isUnderWarranty = formData.warranty_status === 'Under Warranty'
-
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-2xl mx-auto">
-        <h1 className="text-3xl font-bold text-slate-800 mb-2">Check In</h1>
-        <p className="text-slate-500 mb-8">Register a new appliance for service</p>
+    <div className="min-h-screen bg-slate-50 p-6 animate-fade-in">
+      <div className="max-w-3xl mx-auto">
+        <h1 className="text-3xl font-extrabold text-slate-800 mb-1 tracking-tight">Check In</h1>
+        <p className="text-slate-500 mb-8">Register appliances for service (Supports Bundled intake for multiple items)</p>
 
         {message && (
-          <div className={`mb-4 p-4 rounded-lg ${
+          <div className={`mb-4 p-4 rounded-xl border font-medium ${
             message.type === 'success' 
-              ? 'bg-green-50 text-green-700 border border-green-200' 
-              : 'bg-red-50 text-red-700 border border-red-200'
+              ? 'bg-green-50 text-green-700 border-green-200 shadow-sm' 
+              : 'bg-red-50 text-red-700 border-red-200 shadow-sm'
           }`}>
             {message.text}
           </div>
@@ -195,14 +294,14 @@ export default function CheckIn() {
 
         {/* Notification Quick Send after job creation */}
         {lastCreatedJob && (
-          <div className="mb-6 rounded-xl overflow-hidden border border-slate-200 shadow-md">
+          <div className="mb-6 rounded-2xl overflow-hidden border border-slate-200 shadow-lg animate-scale-in">
             {/* Card Header */}
-            <div className="px-4 py-3 flex items-center gap-2 bg-slate-800">
-              <span className="text-white font-bold text-sm">📬 Notify Customer — Job {lastCreatedJob.jobId}</span>
+            <div className="px-5 py-3.5 flex items-center gap-2 bg-slate-800">
+              <span className="text-white font-bold text-sm">📬 Notify Customer — {lastCreatedJob.isBundle ? `Bundle ${lastCreatedJob.jobId}` : `Job ${lastCreatedJob.jobId}`}</span>
               <span className="ml-auto text-[10px] text-white/50 font-medium">FREE • No API needed</span>
             </div>
 
-            <div className="bg-white p-4 space-y-4">
+            <div className="bg-white p-5 space-y-4">
               {/* Customer info */}
               <div className="flex items-center gap-3 text-xs text-slate-600">
                 <span className="font-bold text-slate-800">{lastCreatedJob.customer_name}</span>
@@ -235,7 +334,7 @@ export default function CheckIn() {
                       if (phone.length === 10) phone = '91' + phone
                       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(lastCreatedJob.waMessage)}`, '_blank')
                     }}
-                    className="w-full py-2 rounded-lg font-bold text-sm text-white flex items-center justify-center gap-2 transition-all hover:opacity-90 active:scale-95"
+                    className="w-full py-2 rounded-lg font-bold text-sm text-white flex items-center justify-center gap-2 transition-all hover:opacity-90 active:scale-95 cursor-pointer"
                     style={{ background: '#25d366' }}
                   >
                     <WhatsAppIcon className="w-4 h-4 text-white" />
@@ -252,7 +351,7 @@ export default function CheckIn() {
                     <Mail className="w-4 h-4 text-white" />
                     <span className="text-white font-semibold text-xs">Email to {lastCreatedJob.customer_email}</span>
                   </div>
-                  <div className="p-3 bg-indigo-50 text-xs text-slate-700 whitespace-pre-wrap font-mono leading-relaxed border-b border-indigo-100 max-h-28 overflow-y-auto">
+                  <div className="p-3 bg-indigo-50 text-xs text-slate-700 whitespace-pre-wrap font-mono leading-relaxed border-b border-indigo-100 max-h-32 overflow-y-auto">
                     {lastCreatedJob.emailBody}
                   </div>
                   <div className="p-2 bg-white">
@@ -262,7 +361,7 @@ export default function CheckIn() {
                         const mailto = `mailto:${lastCreatedJob.customer_email}?subject=${encodeURIComponent(lastCreatedJob.emailSubject)}&body=${encodeURIComponent(lastCreatedJob.emailBody)}`
                         window.open(mailto, '_blank')
                       }}
-                      className="w-full py-2 rounded-lg font-bold text-sm text-white bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center gap-2 transition-all active:scale-95"
+                      className="w-full py-2 rounded-lg font-bold text-sm text-white bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
                     >
                       <Mail className="w-4 h-4" />
                       Open Email Client & Send
@@ -280,7 +379,7 @@ export default function CheckIn() {
               <button
                 type="button"
                 onClick={() => setLastCreatedJob(null)}
-                className="w-full py-2 rounded-lg text-xs text-slate-500 border border-slate-200 hover:bg-slate-50 font-semibold transition-colors"
+                className="w-full py-2 rounded-lg text-xs text-slate-500 border border-slate-200 hover:bg-slate-50 font-semibold transition-colors cursor-pointer"
               >
                 Dismiss
               </button>
@@ -288,248 +387,292 @@ export default function CheckIn() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="bg-white rounded-lg border border-slate-200 p-8 space-y-6">
-          
-          {/* Customer Name */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Customer Name *
-            </label>
-            <input
-              type="text"
-              name="customer_name"
-              value={formData.customer_name}
-              onChange={handleChange}
-              placeholder="e.g., Ravi Kumar"
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
-          </div>
-
-          {/* Contact Number */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Contact Number *
-            </label>
-            <input
-              type="tel"
-              name="contact_number"
-              value={formData.contact_number}
-              onChange={handleChange}
-              placeholder="e.g., 9876543210"
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
-          </div>
-
-          {/* Customer Email — Optional */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              Customer Email
-              <span className="ml-2 text-xs font-normal text-slate-400">(optional — used for email notification)</span>
-            </label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="email"
-                name="customer_email"
-                value={formData.customer_email}
-                onChange={handleChange}
-                placeholder="e.g., ravi@gmail.com"
-                className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-              />
-            </div>
-            {formData.customer_email && (
-              <p className="mt-1 text-[11px] text-indigo-600 flex items-center gap-1">
-                <Mail className="w-3 h-3" />
-                Email notification will be available after job creation
-              </p>
-            )}
-          </div>
-
-          {/* Appliance Type */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Appliance Type *
-            </label>
-            <select
-              name="product_category"
-              value={formData.product_category}
-              onChange={handleChange}
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            >
-              <option value="">Select appliance...</option>
-              {APPLIANCE_TYPES.map(type => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Brand - Dropdown */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Brand *
-            </label>
-            <select
-              name="brand"
-              value={formData.brand}
-              onChange={handleChange}
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            >
-              <option value="">Select brand...</option>
-              {BRAND_NAMES.map(brand => (
-                <option key={brand} value={brand}>{brand}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Custom Brand - shown when "Other" is selected */}
-          {formData.brand === 'Other' && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Custom Brand Name *
-              </label>
-              <input
-                type="text"
-                name="custom_brand"
-                value={formData.custom_brand}
-                onChange={handleChange}
-                placeholder="Enter brand name..."
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-              />
-            </div>
-          )}
-
-          {/* Model Name */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Model Name
-            </label>
-            <input
-              type="text"
-              name="model_name"
-              value={formData.model_name}
-              onChange={handleChange}
-              placeholder="e.g., Blue Leaf"
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
-          </div>
-
-          {/* Fault Description */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Fault Description *
-            </label>
-            <textarea
-              name="fault_description"
-              value={formData.fault_description}
-              onChange={handleChange}
-              placeholder="Describe the issue (e.g., motor sparking, not heating up, water leakage)..."
-              rows="3"
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
-          </div>
-
-          {/* Real-time ML Prediction Card */}
-          {formData.product_category && formData.fault_description.trim() && (
-            <div className="bg-teal-50/60 border-2 border-teal-500/20 p-4 rounded-xl flex items-center justify-between shadow-sm animate-fade-in">
-              <div className="space-y-1">
-                <span className="text-[10px] text-teal-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5 animate-pulse text-teal-600" />
-                  AI Service Time Prediction
-                </span>
-                <span className="text-xl font-bold text-slate-800 block">
-                  {predictor ? predictor.predict(formData.product_category, formData.fault_description, '') : 'Calculating...'}
-                </span>
-                <span className="text-xs text-slate-400 block">
-                  {predictor?.isTrained 
-                    ? `Based on ML model trained on ${predictor.trainingSize} past job(s)` 
-                    : 'Based on industry standard heuristic estimates'}
-                </span>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Customer & Staff Details Panel */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-sm">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <span className="w-6 h-6 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center text-xs font-bold">1</span>
+              Customer Details
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Customer Name */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Customer Name *
+                </label>
+                <input
+                  type="text"
+                  name="customer_name"
+                  value={customerData.customer_name}
+                  onChange={handleCustomerChange}
+                  placeholder="e.g., Ravi Kumar"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
+                />
               </div>
-              <div className="bg-teal-600/10 text-teal-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 shrink-0">
-                <span>⚡ Live ML</span>
-              </div>
-            </div>
-          )}
 
-          {/* Warranty Status */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Warranty Status *
-            </label>
-            <div className="flex gap-3">
-              {WARRANTY_STATUS.map(status => (
-                <button
-                  key={status}
-                  type="button"
-                  onClick={() => setFormData(prev => ({ ...prev, warranty_status: status }))}
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg border-2 text-sm font-semibold transition-all ${
-                    formData.warranty_status === status
-                      ? status === 'Under Warranty'
-                        ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm'
-                        : 'border-slate-500 bg-slate-50 text-slate-700 shadow-sm'
-                      : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50'
-                  }`}
+              {/* Contact Number */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Contact Number *
+                </label>
+                <input
+                  type="tel"
+                  name="contact_number"
+                  value={customerData.contact_number}
+                  onChange={handleCustomerChange}
+                  placeholder="e.g., 9876543210"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
+                />
+              </div>
+
+              {/* Customer Email */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Customer Email <span className="text-xs text-slate-400 font-normal">(optional)</span>
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="email"
+                    name="customer_email"
+                    value={customerData.customer_email}
+                    onChange={handleCustomerChange}
+                    placeholder="e.g., ravi@gmail.com"
+                    className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Check In Staff */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Check In Staff *
+                </label>
+                <select
+                  name="checkin_staff"
+                  value={customerData.checkin_staff}
+                  onChange={handleCustomerChange}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
                 >
-                  {status === 'Under Warranty' 
-                    ? <ShieldCheck className="w-4 h-4" /> 
-                    : <ShieldOff className="w-4 h-4" />
-                  }
-                  {status}
-                </button>
-              ))}
+                  <option value="">Select staff...</option>
+                  {STAFF_NAMES.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
-            {isUnderWarranty && (
-              <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3" />
-                This job will be tracked under warranty coverage
-              </p>
-            )}
           </div>
 
-          {/* Assigned Technician */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Assigned Technician *
-            </label>
-            <select
-              name="assigned_technician"
-              value={formData.assigned_technician}
-              onChange={handleChange}
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            >
-              <option value="">Select technician...</option>
-              {TECHNICIAN_NAMES.map(name => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
+          {/* Appliance / Items Panel */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center text-xs font-bold">2</span>
+                Appliance Details
+                {items.length > 1 && (
+                  <span className="text-xs font-semibold bg-gradient-to-r from-teal-500 to-indigo-500 text-white px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                    <Box className="w-3 h-3" /> Bundle Service Active
+                  </span>
+                )}
+              </h2>
+
+              <button
+                type="button"
+                onClick={addItem}
+                className="bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors border border-teal-200/50 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Appliance
+              </button>
+            </div>
+
+            {items.map((item, index) => {
+              const isUnderWarranty = item.warranty_status === 'Under Warranty'
+              return (
+                <div key={index} className="bg-white rounded-2xl border border-slate-200 p-6 space-y-5 shadow-sm relative group/card hover:border-slate-300 transition-all">
+                  {/* Item Header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <span className="text-sm font-extrabold text-slate-700 flex items-center gap-1.5">
+                      <Box className="w-4 h-4 text-teal-600" />
+                      Appliance #{index + 1} {items.length > 1 && `(Bundle Item)`}
+                    </span>
+                    {items.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeItem(index)}
+                        className="text-red-500 hover:text-red-700 p-1.5 rounded-lg hover:bg-red-50 transition-all cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Appliance Type */}
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Appliance Type *
+                      </label>
+                      <select
+                        value={item.product_category}
+                        onChange={(e) => handleItemChange(index, 'product_category', e.target.value)}
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
+                      >
+                        <option value="">Select appliance...</option>
+                        {APPLIANCE_TYPES.map(type => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Brand - Dropdown */}
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Brand *
+                      </label>
+                      <select
+                        value={item.brand}
+                        onChange={(e) => handleItemChange(index, 'brand', e.target.value)}
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
+                      >
+                        <option value="">Select brand...</option>
+                        {BRAND_NAMES.map(brand => (
+                          <option key={brand} value={brand}>{brand}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Custom Brand - shown when "Other" is selected */}
+                    {item.brand === 'Other' && (
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                          Custom Brand Name *
+                        </label>
+                        <input
+                          type="text"
+                          value={item.custom_brand}
+                          onChange={(e) => handleItemChange(index, 'custom_brand', e.target.value)}
+                          placeholder="Enter brand name..."
+                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
+                        />
+                      </div>
+                    )}
+
+                    {/* Model Name */}
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Model Name
+                      </label>
+                      <input
+                        type="text"
+                        value={item.model_name}
+                        onChange={(e) => handleItemChange(index, 'model_name', e.target.value)}
+                        placeholder="e.g., Blue Leaf"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
+                      />
+                    </div>
+
+                    {/* Assigned Technician */}
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Assigned Technician *
+                      </label>
+                      <select
+                        value={item.assigned_technician}
+                        onChange={(e) => handleItemChange(index, 'assigned_technician', e.target.value)}
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
+                      >
+                        <option value="">Select technician...</option>
+                        {TECHNICIAN_NAMES.map(name => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Fault Description */}
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Fault Description *
+                      </label>
+                      <textarea
+                        value={item.fault_description}
+                        onChange={(e) => handleItemChange(index, 'fault_description', e.target.value)}
+                        placeholder="Describe the issue (e.g., motor sparking, not heating up)..."
+                        rows="3"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Real-time ML Prediction Card */}
+                  {item.product_category && item.fault_description.trim() && (
+                    <div className="bg-teal-50/60 border border-teal-500/20 p-4 rounded-xl flex items-center justify-between shadow-sm animate-fade-in">
+                      <div className="space-y-1">
+                        <span className="text-[10px] text-teal-600 font-extrabold uppercase tracking-wider flex items-center gap-1">
+                          <Sparkles className="w-3.5 h-3.5 animate-pulse text-teal-600" />
+                          AI Service Time Prediction
+                        </span>
+                        <span className="text-lg font-bold text-slate-800 block">
+                          {predictor ? predictor.predict(item.product_category, item.fault_description, '') : 'Calculating...'}
+                        </span>
+                        <span className="text-xs text-slate-400 block">
+                          {predictor?.isTrained 
+                            ? `Based on ML model trained on ${predictor.trainingSize} past job(s)` 
+                            : 'Based on industry standard heuristic estimates'}
+                        </span>
+                      </div>
+                      <div className="bg-teal-600/10 text-teal-700 px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0">
+                        ⚡ Live ML
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Warranty Status */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Warranty Status *
+                    </label>
+                    <div className="flex gap-3">
+                      {WARRANTY_STATUS.map(status => (
+                        <button
+                          key={status}
+                          type="button"
+                          onClick={() => handleItemChange(index, 'warranty_status', status)}
+                          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border-2 text-xs font-bold transition-all cursor-pointer ${
+                            item.warranty_status === status
+                              ? status === 'Under Warranty'
+                                ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm'
+                                : 'border-slate-500 bg-slate-50 text-slate-700 shadow-sm'
+                              : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50'
+                          }`}
+                        >
+                          {status === 'Under Warranty' 
+                            ? <ShieldCheck className="w-4 h-4" /> 
+                            : <ShieldOff className="w-4 h-4" />
+                          }
+                          {status}
+                        </button>
+                      ))}
+                    </div>
+                    {isUnderWarranty && (
+                      <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1">
+                        <ShieldCheck className="w-3 h-3" />
+                        This job will be tracked under warranty coverage
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
 
-          {/* Check In Staff */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Check In Staff *
-            </label>
-            <select
-              name="checkin_staff"
-              value={formData.checkin_staff}
-              onChange={handleChange}
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-            >
-              <option value="">Select staff...</option>
-              {STAFF_NAMES.map(name => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Submit Button */}
+          {/* Submit Section */}
           <div className="pt-4">
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-gray-400 text-white font-semibold py-3 rounded-lg transition-colors cursor-pointer"
+              className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-gray-400 text-white font-bold py-3.5 rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg active:scale-[0.99] text-sm flex items-center justify-center gap-2"
             >
-              {loading ? 'Creating job...' : 'Create Job'}
+              {loading ? 'Processing intake...' : items.length > 1 ? `Create Bundle Service (${items.length} Jobs)` : 'Create Job'}
             </button>
           </div>
         </form>
