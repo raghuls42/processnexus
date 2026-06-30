@@ -3,6 +3,7 @@ import {
   getJobsByPhone, 
   updateJob, 
   getAllJobs, 
+  getActiveJobs,
   getNotificationTemplates, 
   logNotification 
 } from '../firebase/services'
@@ -18,7 +19,11 @@ import {
   X,
   CheckCircle2,
   ExternalLink,
-  Send
+  Send,
+  RefreshCw,
+  Wrench,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react'
 import { ServiceTimePredictor } from '../utils/mlModel'
 
@@ -34,6 +39,9 @@ function WhatsAppIcon({ className }) {
 export default function Update() {
   const [searchPhone, setSearchPhone] = useState('')
   const [jobs, setJobs] = useState([])
+  const [activeQueue, setActiveQueue] = useState([])
+  const [queueLoading, setQueueLoading] = useState(true)
+  const [showPhoneSearch, setShowPhoneSearch] = useState(false)
   const [selectedJob, setSelectedJob] = useState(null)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
@@ -57,7 +65,7 @@ export default function Update() {
   })
 
   useEffect(() => {
-    async function initPredictor() {
+    async function init() {
       try {
         const allJobs = await getAllJobs()
         const ml = new ServiceTimePredictor()
@@ -66,9 +74,21 @@ export default function Update() {
       } catch (err) {
         console.error('Error training predictor on Update load:', err)
       }
+      loadActiveQueue()
     }
-    initPredictor()
+    init()
   }, [])
+
+  const loadActiveQueue = async () => {
+    setQueueLoading(true)
+    try {
+      const active = await getActiveJobs()
+      setActiveQueue(active)
+    } catch (err) {
+      console.error('Error loading active queue:', err)
+    }
+    setQueueLoading(false)
+  }
 
   const formatDate = (timestamp) => {
     if (!timestamp) return 'N/A'
@@ -82,6 +102,7 @@ export default function Update() {
     setJobs([])
     setSearchPhone('')
     setWhatsappSent(false)
+    loadActiveQueue()
     try {
       getAllJobs().then(allJobs => {
         const ml = new ServiceTimePredictor()
@@ -291,45 +312,146 @@ export default function Update() {
           </div>
         )}
 
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-          <form onSubmit={handleSearch} className="flex gap-3 mb-6">
-            <input 
-              type="tel" 
-              value={searchPhone} 
-              onChange={(e) => setSearchPhone(e.target.value)} 
-              placeholder="Enter phone number" 
-              className="flex-1 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all" 
-            />
-            <button type="submit" disabled={loading} className="bg-teal-600 hover:bg-teal-700 disabled:bg-gray-400 text-white font-semibold px-6 py-2 rounded-lg transition-colors cursor-pointer">
-              {loading ? 'Searching...' : 'Search'}
+        {/* ── Active Repairs Queue ── */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <Wrench className="w-4 h-4 text-teal-600" />
+              Active Repairs Queue
+              {!queueLoading && (
+                <span className="ml-1 text-xs font-medium bg-teal-50 text-teal-700 px-2 py-0.5 rounded-full">
+                  {activeQueue.length}
+                </span>
+              )}
+            </h2>
+            <button
+              type="button"
+              onClick={loadActiveQueue}
+              disabled={queueLoading}
+              className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-teal-600 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${queueLoading ? 'animate-spin' : ''}`} />
+              Refresh
             </button>
-          </form>
+          </div>
 
-          {jobs.length > 0 && (
+          {queueLoading ? (
             <div className="space-y-2">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Select Active Job</h3>
-              {jobs.map((job) => (
-                <button 
-                  key={job.id} 
-                  type="button"
-                  onClick={() => handleSelectJob(job)} 
-                  className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
-                    selectedJob?.id === job.id 
-                      ? 'border-teal-600 bg-teal-50/50 shadow-sm' 
-                      : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <div className="font-mono text-sm font-bold text-slate-800">{job.job_id}</div>
-                      <div className="text-sm text-slate-600 mt-1">{job.customer_name} • {job.brand} {job.model_name || ''}</div>
-                    </div>
-                    <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-semibold">{job.status}</span>
-                  </div>
-                </button>
+              {[1,2,3].map(i => (
+                <div key={i} className="h-16 rounded-xl bg-slate-100 animate-pulse" />
               ))}
             </div>
+          ) : activeQueue.length === 0 ? (
+            <div className="text-center py-10 text-slate-400">
+              <Wrench className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">No active repairs at the moment</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {activeQueue.map((job) => {
+                const statusColor = {
+                  'Received':   'bg-blue-50 text-blue-700 border-blue-100',
+                  'Diagnosed':  'bg-amber-50 text-amber-700 border-amber-100',
+                  'In Service': 'bg-violet-50 text-violet-700 border-violet-100',
+                }[job.status] || 'bg-slate-100 text-slate-600 border-slate-200'
+
+                return (
+                  <button
+                    key={job.id}
+                    type="button"
+                    onClick={() => handleSelectJob(job)}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                      selectedJob?.id === job.id
+                        ? 'border-teal-600 bg-teal-50/60 shadow-sm'
+                        : 'border-slate-200 hover:border-teal-300 hover:bg-teal-50/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-sm font-bold text-slate-800">{job.job_id}</span>
+                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${statusColor}`}>
+                            {job.status}
+                          </span>
+                          {job.is_bundle && (
+                            <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full">
+                              Bundle
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-slate-600 mt-1 truncate">
+                          <span className="font-medium text-slate-800">{job.customer_name}</span>
+                          {' · '}{job.brand} {job.model_name || ''}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5">{job.product_category} · Checked in: {formatDate(job.checkin_date)}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-xs text-slate-400">Est. Cost</p>
+                        <p className="font-bold text-slate-700 text-sm">
+                          {job.service_cost > 0 ? `₹${job.service_cost}` : '—'}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
           )}
+
+          {/* Collapsible phone search */}
+          <div className="mt-5 pt-4 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setShowPhoneSearch(p => !p)}
+              className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-teal-600 transition-colors cursor-pointer"
+            >
+              <Phone className="w-3.5 h-3.5" />
+              Search by phone number
+              {showPhoneSearch ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+
+            {showPhoneSearch && (
+              <form onSubmit={handleSearch} className="flex gap-3 mt-3">
+                <input
+                  type="tel"
+                  value={searchPhone}
+                  onChange={(e) => setSearchPhone(e.target.value)}
+                  placeholder="Enter phone number"
+                  className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
+                />
+                <button type="submit" disabled={loading} className="bg-teal-600 hover:bg-teal-700 disabled:bg-gray-400 text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors cursor-pointer">
+                  {loading ? 'Searching...' : 'Search'}
+                </button>
+              </form>
+            )}
+
+            {/* Results from phone search */}
+            {jobs.length > 0 && (
+              <div className="space-y-2 mt-3">
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Phone Search Results</h3>
+                {jobs.map((job) => (
+                  <button
+                    key={job.id}
+                    type="button"
+                    onClick={() => handleSelectJob(job)}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                      selectedJob?.id === job.id
+                        ? 'border-teal-600 bg-teal-50/50 shadow-sm'
+                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <div className="font-mono text-sm font-bold text-slate-800">{job.job_id}</div>
+                        <div className="text-sm text-slate-600 mt-1">{job.customer_name} · {job.brand} {job.model_name || ''}</div>
+                      </div>
+                      <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-semibold">{job.status}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {selectedJob && (

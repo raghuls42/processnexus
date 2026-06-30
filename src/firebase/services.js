@@ -89,6 +89,40 @@ export const getAllJobs = async () => {
   }
 }
 
+// Get active (non-completed) jobs for Update page live queue
+export const getActiveJobs = async () => {
+  try {
+    const snap = await getDocs(
+      query(
+        collection(db, 'service_jobs'),
+        where('status', 'in', ['Received', 'In Service', 'Diagnosed']),
+        orderBy('checkin_date', 'desc')
+      )
+    )
+    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+  } catch (error) {
+    console.error('Error fetching active jobs:', error)
+    return []
+  }
+}
+
+// Get jobs ready for checkout (Ready / Notified)
+export const getReadyJobs = async () => {
+  try {
+    const snap = await getDocs(
+      query(
+        collection(db, 'service_jobs'),
+        where('status', 'in', ['Ready', 'Notified']),
+        orderBy('checkin_date', 'desc')
+      )
+    )
+    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+  } catch (error) {
+    console.error('Error fetching ready jobs:', error)
+    return []
+  }
+}
+
 // Get jobs by customer phone
 export const getJobsByPhone = async (phone) => {
   try {

@@ -3,6 +3,7 @@ import {
   getJobsByPhone, 
   checkoutJob, 
   getAllJobs, 
+  getReadyJobs,
   getNotificationTemplates, 
   logNotification 
 } from '../firebase/services'
@@ -23,7 +24,11 @@ import {
   X,
   Mail,
   ExternalLink,
-  Box
+  Box,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  ShoppingBag
 } from 'lucide-react'
 import { ServiceTimePredictor } from '../utils/mlModel'
 
@@ -39,6 +44,9 @@ function WhatsAppIcon({ className, style }) {
 export default function CheckOut() {
   const [searchPhone, setSearchPhone] = useState('')
   const [jobs, setJobs] = useState([])
+  const [readyQueue, setReadyQueue] = useState([])
+  const [queueLoading, setQueueLoading] = useState(true)
+  const [showPhoneSearch, setShowPhoneSearch] = useState(false)
   const [selectedJob, setSelectedJob] = useState(null)
   const [selectedBundleJobs, setSelectedBundleJobs] = useState([])
   const [loading, setLoading] = useState(false)
@@ -64,7 +72,7 @@ export default function CheckOut() {
   })
 
   useEffect(() => {
-    async function initPredictor() {
+    async function init() {
       try {
         const allJobs = await getAllJobs()
         const ml = new ServiceTimePredictor()
@@ -73,9 +81,21 @@ export default function CheckOut() {
       } catch (err) {
         console.error('Error training predictor on CheckOut load:', err)
       }
+      loadReadyQueue()
     }
-    initPredictor()
+    init()
   }, [])
+
+  const loadReadyQueue = async () => {
+    setQueueLoading(true)
+    try {
+      const ready = await getReadyJobs()
+      setReadyQueue(ready)
+    } catch (err) {
+      console.error('Error loading ready queue:', err)
+    }
+    setQueueLoading(false)
+  }
 
   const formatDate = (timestamp) => {
     if (!timestamp) return 'N/A'
@@ -349,6 +369,7 @@ export default function CheckOut() {
       setJobs([])
       setSearchPhone('')
       setPaymentData({ payment_method: '', amount_paid: '' })
+      loadReadyQueue()
 
       try {
         const allJobs = await getAllJobs()
@@ -389,77 +410,191 @@ export default function CheckOut() {
           </div>
         )}
 
-        {/* Search Panel */}
+        {/* Search Panel → replaced with Pending Collections queue */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-          <h2 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <Search className="w-4 h-4 text-teal-600" />
-            Find Customer
-          </h2>
-          <form onSubmit={handleSearch} className="flex gap-3">
-            <div className="relative flex-1">
-              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-              <input
-                type="tel"
-                value={searchPhone}
-                onChange={(e) => setSearchPhone(e.target.value)}
-                placeholder="e.g. 9876543210"
-                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-colors cursor-pointer"
-            >
-              {loading ? 'Searching…' : 'Search'}
-            </button>
-          </form>
-        </div>
-
-        {/* Job Selection List */}
-        {jobs.length > 0 && (
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-3">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-indigo-500" />
-              Jobs Ready for Checkout
-              <span className="ml-1 text-xs font-medium bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">{jobs.length}</span>
+              <ShoppingBag className="w-4 h-4 text-indigo-500" />
+              Pending Collections
+              {!queueLoading && (
+                <span className="ml-1 text-xs font-medium bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">
+                  {readyQueue.length}
+                </span>
+              )}
             </h2>
-            {jobs.map((job) => (
-              <button
-                key={job.id}
-                onClick={() => handleSelectJob(job)}
-                className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
-                  selectedJob?.id === job.id
-                    ? 'border-teal-500 bg-teal-50/60 shadow-sm'
-                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-bold text-slate-800">{job.job_id}</span>
-                      <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full font-semibold">{job.status}</span>
-                      {job.is_bundle && (
-                        <span className="text-[10px] bg-teal-50 text-teal-700 border border-teal-100 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-                          <Box className="w-3 h-3 text-teal-600" /> Bundle: {job.bundle_id}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-slate-600">
-                      {job.brand} {job.model_name} — <span className="text-slate-500">{job.product_category}</span>
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-slate-400">Service Cost</p>
-                    <p className="font-bold text-slate-800 text-base">
-                      {job.service_cost > 0 ? `₹${job.service_cost}` : '—'}
-                    </p>
-                  </div>
-                </div>
-              </button>
-            ))}
+            <button
+              type="button"
+              onClick={loadReadyQueue}
+              disabled={queueLoading}
+              className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-indigo-600 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${queueLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
           </div>
-        )}
+
+          {queueLoading ? (
+            <div className="space-y-2">
+              {[1,2,3].map(i => (
+                <div key={i} className="h-16 rounded-xl bg-slate-100 animate-pulse" />
+              ))}
+            </div>
+          ) : readyQueue.length === 0 ? (
+            <div className="text-center py-10 text-slate-400">
+              <ShoppingBag className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">No jobs ready for collection</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {(() => {
+                // Group bundles so they show as one card; single jobs show normally
+                const seen = new Set()
+                const rows = []
+                readyQueue.forEach(job => {
+                  if (job.bundle_id) {
+                    if (!seen.has(job.bundle_id)) {
+                      seen.add(job.bundle_id)
+                      const bundleItems = readyQueue.filter(j => j.bundle_id === job.bundle_id)
+                      rows.push({ type: 'bundle', key: job.bundle_id, lead: job, items: bundleItems })
+                    }
+                  } else {
+                    rows.push({ type: 'single', key: job.id, lead: job, items: [job] })
+                  }
+                })
+                return rows.map(row => (
+                  <button
+                    key={row.key}
+                    onClick={() => handleSelectJob(row.lead)}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                      selectedJob?.id === row.lead.id || selectedBundleJobs.some(j => j.id === row.lead.id)
+                        ? 'border-indigo-500 bg-indigo-50/50 shadow-sm'
+                        : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/20'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {row.type === 'bundle' ? (
+                            <>
+                              <span className="font-mono text-sm font-bold text-slate-800">{row.key}</span>
+                              <span className="text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Box className="w-3 h-3" /> Bundle · {row.items.length} items
+                              </span>
+                            </>
+                          ) : (
+                            <span className="font-mono text-sm font-bold text-slate-800">{row.lead.job_id}</span>
+                          )}
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-100">
+                            {row.lead.status}
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-600 mt-1 truncate">
+                          <span className="font-medium text-slate-800">{row.lead.customer_name}</span>
+                          {' · '}
+                          {row.type === 'bundle'
+                            ? row.items.map(j => `${j.brand} ${j.model_name || ''}`).join(', ')
+                            : `${row.lead.brand} ${row.lead.model_name || ''}`
+                          }
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {row.lead.product_category} · {row.lead.contact_number}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-xs text-slate-400">Service Cost</p>
+                        <p className="font-bold text-slate-800 text-base">
+                          {row.items.reduce((s, j) => s + (j.service_cost || 0), 0) > 0
+                            ? `₹${row.items.reduce((s, j) => s + (j.service_cost || 0), 0)}`
+                            : '—'
+                          }
+                        </p>
+                        {row.type === 'bundle' && (
+                          <p className="text-[10px] text-teal-600 font-semibold mt-0.5">15% discount</p>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                ))
+              })()}
+            </div>
+          )}
+
+          {/* Collapsible phone search */}
+          <div className="mt-5 pt-4 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setShowPhoneSearch(p => !p)}
+              className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
+            >
+              <Phone className="w-3.5 h-3.5" />
+              Search by phone number
+              {showPhoneSearch ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+
+            {showPhoneSearch && (
+              <form onSubmit={handleSearch} className="flex gap-3 mt-3">
+                <div className="relative flex-1">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                  <input
+                    type="tel"
+                    value={searchPhone}
+                    onChange={(e) => setSearchPhone(e.target.value)}
+                    placeholder="e.g. 9876543210"
+                    className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-colors cursor-pointer"
+                >
+                  {loading ? 'Searching…' : 'Search'}
+                </button>
+              </form>
+            )}
+
+            {/* Phone search results */}
+            {jobs.length > 0 && (
+              <div className="space-y-2 mt-3">
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Phone Search Results</h3>
+                {jobs.map((job) => (
+                  <button
+                    key={job.id}
+                    onClick={() => handleSelectJob(job)}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                      selectedJob?.id === job.id
+                        ? 'border-indigo-500 bg-indigo-50/50 shadow-sm'
+                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-bold text-slate-800">{job.job_id}</span>
+                          <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full font-semibold">{job.status}</span>
+                          {job.is_bundle && (
+                            <span className="text-[10px] bg-teal-50 text-teal-700 border border-teal-100 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                              <Box className="w-3 h-3 text-teal-600" /> Bundle: {job.bundle_id}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-slate-600">
+                          {job.brand} {job.model_name} — <span className="text-slate-500">{job.product_category}</span>
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-slate-400">Service Cost</p>
+                        <p className="font-bold text-slate-800 text-base">
+                          {job.service_cost > 0 ? `₹${job.service_cost}` : '—'}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Service Details + Payment Form */}
         {selectedJob && (
